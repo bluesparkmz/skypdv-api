@@ -1,5 +1,6 @@
 from datetime import datetime
 
+import os
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -12,6 +13,21 @@ from controllers import controller
 
 import models  # noqa: F401
 
+def _build_cors_origins():
+    raw = os.getenv("CORS_ORIGINS", "").strip()
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "https://skypdv.bluesparkmz.com",
+        "https://skypdv.skyvenda.com",
+        "https://skypdvmz.bluesparkmz.com",
+        "https://skypdv.vercel.app",
+    ]
+
 
 Base.metadata.create_all(bind=engine)
 
@@ -23,18 +39,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    # Abra o CORS para qualquer domínio HTTPS/HTTP (mantendo creds habilitados).
     allow_origin_regex=r"https?://.*",
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-        "https://skypdv.bluesparkmz.com",
-        "https://skypdv.skyvenda.com",
-        "https://skypdvmz.bluesparkmz.com",
-        "https://skypdv.vercel.app",
-    ],
+    allow_origins=_build_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
