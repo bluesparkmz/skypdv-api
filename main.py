@@ -23,6 +23,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
+    # Abra o CORS para qualquer domínio HTTPS/HTTP (mantendo creds habilitados).
+    allow_origin_regex=r"https?://.*",
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:5173",
