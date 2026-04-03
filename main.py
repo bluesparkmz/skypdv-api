@@ -30,10 +30,13 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "https://skypdv.bluesparkmz.com",
         "https://skypdv.skyvenda.com",
+        "https://skypdvmz.bluesparkmz.com",
+        "https://skypdv.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=86400,
 )
 
 
