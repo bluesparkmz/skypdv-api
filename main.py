@@ -63,6 +63,9 @@ def user_profile(
     current_user: User = Depends(get_current_user),
 ):
     terminal = getattr(current_user, "pdv_terminal", None)
+    # pdv_terminal pode ser lista (relationship one-to-many). Pegamos o primeiro.
+    if isinstance(terminal, list):
+        terminal = terminal[0] if terminal else None
     total_products = 0
     if terminal:
         total_products = (
