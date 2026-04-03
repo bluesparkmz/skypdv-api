@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BlueSpark MZ Auth Architecture Guide</title>
+  <style>
+    :root {
+      --bg: #09111f;
+      --panel: #101a2e;
+      --panel-2: #0d1628;
+      --text: #e7edf7;
+      --muted: #98a7c2;
+      --line: #223252;
+      --accent: #4cc2ff;
+      --accent-2: #76f0c1;
+      --warn: #ffd166;
+      --danger: #ff7b7b;
+      --code-bg: #07101d;
+      --token-key: #7dd3fc;
+      --token-string: #86efac;
+      --token-comment: #94a3b8;
+      --token-number: #f9a8d4;
+      --token-keyword: #fcd34d;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(76, 194, 255, 0.16), transparent 30%),
+        radial-gradient(circle at top left, rgba(118, 240, 193, 0.09), transparent 24%),
+        linear-gradient(180deg, #08111d 0%, #0b1424 100%);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .wrap {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0 64px;
+    }
+
+    .hero {
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: linear-gradient(135deg, rgba(16, 26, 46, 0.96), rgba(10, 18, 32, 0.94));
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+    }
+
+    .eyebrow {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(76, 194, 255, 0.12);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.2;
+      margin: 0 0 14px;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      margin-top: 14px;
+    }
+
+    h2 {
+      font-size: 1.45rem;
+      margin-top: 28px;
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      color: var(--accent-2);
+    }
+
+    p, li {
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    section {
+      margin-top: 26px;
+      padding: 24px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: rgba(16, 26, 46, 0.74);
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+
+    .card {
+      padding: 18px;
+      border-radius: 18px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+    }
+
+    .mini-title {
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .tag {
+      display: inline-block;
+      margin: 4px 6px 0 0;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: rgba(118, 240, 193, 0.1);
+      color: var(--accent-2);
+      font-size: 0.84rem;
+    }
+
+    .flow {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .step {
+      position: relative;
+      padding: 14px 14px 14px 54px;
+      border-radius: 14px;
+      background: #0b1527;
+      border: 1px solid var(--line);
+    }
+
+    .step::before {
+      content: attr(data-step);
+      position: absolute;
+      left: 14px;
+      top: 12px;
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #04111d;
+      font-weight: 800;
+      font-size: 0.9rem;
+    }
+
+    .diagram {
+      overflow-x: auto;
+      padding: 18px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: #07101d;
+      color: #c7d5eb;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.93rem;
+      white-space: pre;
+    }
+
+    pre {
+      margin: 0;
+      overflow-x: auto;
+      padding: 18px;
+      border-radius: 16px;
+      border: 1px solid #1d2d49;
+      background: var(--code-bg);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.92rem;
+      line-height: 1.55;
+    }
+
+    code {
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    .inline {
+      padding: 0.14rem 0.38rem;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+    }
+
+    .comment { color: var(--token-comment); }
+    .key { color: var(--token-key); }
+    .string { color: var(--token-string); }
+    .number { color: var(--token-number); }
+    .keyword { color: var(--token-keyword); }
+
+    .note, .warning {
+      margin-top: 12px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+    }
+
+    .note {
+      background: rgba(76, 194, 255, 0.08);
+    }
+
+    .warning {
+      background: rgba(255, 209, 102, 0.08);
+      border-color: rgba(255, 209, 102, 0.25);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      overflow: hidden;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+    }
+
+    th, td {
+      padding: 12px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    th {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+
+    td {
+      color: var(--muted);
+    }
+
+    .footer {
+      margin-top: 22px;
+      text-align: center;
+      color: #7f91b3;
+      font-size: 0.92rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <span class="eyebrow">BlueSpark Identity Platform</span>
+      <h1>Arquitetura de autenticação centralizada para os apps BlueSpark MZ</h1>
+      <p>
+        Esta documentação define como um app do ecossistema, como
+        <span class="inline">SkyVenda MZ</span>, deve autenticar utilizadores usando a
+        <span class="inline">BlueSpark MZ</span> como provedor central de identidade,
+        assumindo backend em <span class="inline">FastAPI</span>.
+      </p>
+      <div>
+        <span class="tag">Conta única</span>
+        <span class="tag">Google OAuth central</span>
+        <span class="tag">Backends sincronizados</span>
+        <span class="tag">central_user_id</span>
+        <span class="tag">FastAPI</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>Visão geral</h2>
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="mini-title">Antes</div>
+          <p>Cada app tinha utilizadores, senhas e login social próprios.</p>
+        </div>
+        <div class="card">
+          <div class="mini-title">Agora</div>
+          <p>A <span class="inline">BlueSpark MZ</span> gere identidade, login, social auth e tokens para todos os apps.</p>
+        </div>
+      </div>
+
+      <div class="diagram">+--------------------+            +-------------------------+
+|  Frontend do App   |            |  Frontend BlueSpark MZ  |
+|  Ex: SkyVenda MZ   |            |  Login / Register       |
++---------+----------+            +------------+------------+
+          |                                    |
+          | login local ou google              |
+          |                                    |
+          v                                    v
++---------+------------------------------------+----------+
+|           BlueSpark MZ Accounts / Auth Backend           |
+|  - users globais                                         |
+|  - password login                                        |
+|  - google one tap / oauth                                |
+|  - refresh token                                         |
+|  - introspect / validate token                           |
++---------------------------+------------------------------+
+                            |
+                            | token + dados do user
+                            v
++---------------------------+------------------------------+
+|               Backend do App Consumidor                  |
+|  - recebe token BlueSpark                                |
+|  - valida token com BlueSpark                            |
+|  - resolve user local por central_user_id                |
+|  - cria user local se faltar                             |
+|  - continua regras de negocio do produto                 |
++----------------------------------------------------------+</div>
+    </section>
+
+    <section>
+      <h2>Princípio arquitetural</h2>
+      <p>
+        O utilizador existe primeiro na <span class="inline">BlueSpark MZ</span>.
+        Cada produto mantém apenas o que é local ao seu domínio, mas nunca volta a ser dono da autenticação principal.
+      </p>
+      <div class="note">
+        Um app consumidor pode ter tabela local <span class="inline">users</span>, mas essa tabela serve para contexto do produto.
+        A identidade central continua a ser da BlueSpark.
+      </div>
+    </section>
+
+    <section>
+      <h2>Responsabilidades</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Componente</th>
+            <th>Responsabilidade</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="inline">BlueSpark frontend</span></td>
+            <td>Registo, login próprio, gestão de conta e recuperação de senha.</td>
+          </tr>
+          <tr>
+            <td><span class="inline">BlueSpark backend</span></td>
+            <td>Emitir tokens, autenticar Google, gerir memberships por produto e validar sessões.</td>
+          </tr>
+          <tr>
+            <td><span class="inline">Frontend do app</span></td>
+            <td>Iniciar login no contexto do produto e enviar token ao backend do próprio app.</td>
+          </tr>
+          <tr>
+            <td><span class="inline">Backend do app</span></td>
+            <td>Validar o token BlueSpark, criar ou atualizar user local e aplicar regras do produto.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Stack assumida</h2>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>Backend central</h3>
+          <p><span class="inline">FastAPI</span> responsável por login, Google auth, emissão de token, refresh e introspecção.</p>
+        </div>
+        <div class="card">
+          <h3>Backend do app consumidor</h3>
+          <p><span class="inline">FastAPI</span> responsável por chamar a auth central, sincronizar o user local e proteger rotas do produto.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Fluxo recomendado para qualquer app</h2>
+      <div class="flow">
+        <div class="step" data-step="1">
+          O utilizador tenta entrar no app consumidor, por exemplo <span class="inline">SkyVenda MZ</span>.
+        </div>
+        <div class="step" data-step="2">
+          O app usa a <span class="inline">BlueSpark MZ</span> para autenticar com senha ou Google.
+        </div>
+        <div class="step" data-step="3">
+          A <span class="inline">BlueSpark MZ</span> emite <span class="inline">access_token</span> e <span class="inline">refresh_token</span> associados ao <span class="inline">product_code</span>.
+        </div>
+        <div class="step" data-step="4">
+          O backend do app valida o token na BlueSpark e procura o utilizador local por <span class="inline">central_user_id</span>.
+        </div>
+        <div class="step" data-step="5">
+          Se não existir, o backend cria o utilizador local vinculado ao utilizador global.
+        </div>
+        <div class="step" data-step="6">
+          A sessão continua no app com o contexto local já sincronizado.
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Google Auth centralizado</h2>
+      <p>
+        Todos os apps devem usar o mesmo cliente Google da <span class="inline">BlueSpark MZ</span>.
+        O utilizador pode autenticar no <span class="inline">SkyVenda MZ</span> sem abrir a BlueSpark manualmente.
+      </p>
+
+      <pre><code><span class="comment">// Exemplo de configuração no Google Cloud</span>
+<span class="key">Authorized JavaScript origins</span>
+- <span class="string">https://bluesparkmz.com</span>
+- <span class="string">https://skyvenda.com</span>
+- <span class="string">https://skypdv.com</span>
+
+<span class="key">Authorized redirect URIs</span>
+- <span class="string">https://accounts.bluesparkmz.com/auth/google/callback</span></code></pre>
+
+      <div class="warning">
+        O frontend do app pode iniciar o login Google, mas a validação da credencial e a emissão de tokens devem acontecer na BlueSpark.
+      </div>
+    </section>
+
+    <section>
+      <h2>Contrato mínimo entre app e auth central</h2>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>Variáveis esperadas no app consumidor</h3>
+          <pre><code><span class="key">BLUESPARK_ACCOUNTS_URL</span>=<span class="string">https://accounts.bluesparkmz.com</span>
+<span class="key">BLUESPARK_PRODUCT_CODE</span>=<span class="string">skyvenda</span></code></pre>
+        </div>
+        <div class="card">
+          <h3>Campos mínimos no utilizador local</h3>
+          <pre><code>{
+  <span class="key">"id"</span>: <span class="number">17</span>,
+  <span class="key">"central_user_id"</span>: <span class="number">245</span>,
+  <span class="key">"email"</span>: <span class="string">"user@email.com"</span>,
+  <span class="key">"username"</span>: <span class="string">"skyuser"</span>
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Exemplo base em FastAPI</h2>
+      <pre><code><span class="keyword">import</span> os
+<span class="keyword">import</span> httpx
+
+<span class="keyword">from</span> fastapi <span class="keyword">import</span> HTTPException, status
+
+BLUESPARK_ACCOUNTS_URL = os.getenv(<span class="string">"BLUESPARK_ACCOUNTS_URL"</span>, <span class="string">"https://accounts.bluesparkmz.com"</span>).rstrip(<span class="string">"/"</span>)
+BLUESPARK_PRODUCT_CODE = os.getenv(<span class="string">"BLUESPARK_PRODUCT_CODE"</span>, <span class="string">"skyvenda"</span>)
+BLUESPARK_AUTH_TIMEOUT_SECONDS = <span class="number">15</span>
+
+<span class="keyword">def</span> _accounts_url(path: str) -&gt; str:
+    <span class="keyword">return</span> <span class="string">f"{BLUESPARK_ACCOUNTS_URL}{path}"</span>
+
+<span class="keyword">def</span> _accounts_request(method: str, path: str, json: dict | None = <span class="keyword">None</span>, token: str | None = <span class="keyword">None</span>) -&gt; dict:
+    headers = {}
+    <span class="keyword">if</span> token:
+        headers[<span class="string">"Authorization"</span>] = <span class="string">f"Bearer {token}"</span>
+
+    <span class="keyword">try</span>:
+        <span class="keyword">with</span> httpx.Client(timeout=BLUESPARK_AUTH_TIMEOUT_SECONDS) <span class="keyword">as</span> client:
+            response = client.request(method, _accounts_url(path), json=json, headers=headers)
+    <span class="keyword">except</span> httpx.HTTPError <span class="keyword">as</span> exc:
+        <span class="keyword">raise</span> HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=<span class="string">"BlueSpark auth indisponivel no momento."</span>
+        ) <span class="keyword">from</span> exc
+
+    data = response.json() <span class="keyword">if</span> response.content <span class="keyword">else</span> {}
+    <span class="keyword">if</span> response.status_code &gt;= <span class="number">400</span>:
+        <span class="keyword">raise</span> HTTPException(
+            status_code=response.status_code,
+            detail=data.get(<span class="string">"detail"</span>, <span class="string">"Falha na auth central."</span>)
+        )
+
+    <span class="keyword">return</span> data</code></pre>
+    </section>
+
+    <section>
+      <h2>Fluxo 1: login com conta BlueSpark</h2>
+      <pre><code><span class="comment">// Frontend do app -> backend do app</span>
+POST <span class="string">/user/token</span>
+
+<span class="comment">// Backend do app -> BlueSpark auth</span>
+POST <span class="string">{BLUESPARK_ACCOUNTS_URL}/auth/login</span>
+{
+  <span class="key">"identifier"</span>: <span class="string">"user@email.com"</span>,
+  <span class="key">"password"</span>: <span class="string">"12345678"</span>,
+  <span class="key">"product_code"</span>: <span class="string">"skyvenda"</span>
+}
+
+<span class="comment">// Resposta da BlueSpark</span>
+{
+  <span class="key">"access_token"</span>: <span class="string">"eyJ..."</span>,
+  <span class="key">"refresh_token"</span>: <span class="string">"eyJ..."</span>,
+  <span class="key">"expires_in"</span>: <span class="number">3600</span>,
+  <span class="key">"user"</span>: {
+    <span class="key">"id"</span>: <span class="number">245</span>,
+    <span class="key">"email"</span>: <span class="string">"user@email.com"</span>
+  }
+}</code></pre>
+    </section>
+
+    <section>
+      <h2>Fluxo 2: login com Google sem entrar no frontend BlueSpark</h2>
+      <pre><code><span class="comment">// Frontend do app recebe credential do Google One Tap</span>
+POST <span class="string">/user/auth/one-tap</span>
+{
+  <span class="key">"credential"</span>: <span class="string">"google-id-token"</span>
+}
+
+<span class="comment">// Backend do app -> BlueSpark auth</span>
+POST <span class="string">{BLUESPARK_ACCOUNTS_URL}/auth/google/one-tap</span>
+{
+  <span class="key">"credential"</span>: <span class="string">"google-id-token"</span>,
+  <span class="key">"product_code"</span>: <span class="string">"skyvenda"</span>
+}
+
+<span class="comment">// BlueSpark valida a credencial Google e devolve tokens do ecossistema</span></code></pre>
+    </section>
+
+    <section>
+      <h2>Fluxo 3: resolução do utilizador local</h2>
+      <pre><code><span class="comment">// Backend do app -> BlueSpark auth</span>
+POST <span class="string">{BLUESPARK_ACCOUNTS_URL}/auth/introspect</span>
+{
+  <span class="key">"token"</span>: <span class="string">"eyJ..."</span>,
+  <span class="key">"product_code"</span>: <span class="string">"skyvenda"</span>
+}
+
+<span class="comment">// Se active=true</span>
+1. procurar user local por <span class="inline">central_user_id</span>
+2. se não existir, tentar por email
+3. se achar por email, preencher <span class="inline">central_user_id</span>
+4. se não achar, criar user local
+5. continuar a requisição normalmente</code></pre>
+    </section>
+
+    <section>
+      <h2>Implementação FastAPI para resolver o user local</h2>
+      <pre><code><span class="keyword">from</span> fastapi <span class="keyword">import</span> HTTPException, status
+<span class="keyword">from</span> sqlalchemy.orm <span class="keyword">import</span> Session
+
+<span class="keyword">def</span> sync_local_user_from_claims(db: Session, claims: dict):
+    central_user_id = str(claims.get(<span class="string">"central_user_id"</span>) <span class="keyword">or</span> claims.get(<span class="string">"sub"</span>) <span class="keyword">or</span> <span class="string">""</span>).strip()
+    email = (claims.get(<span class="string">"email"</span>) <span class="keyword">or</span> <span class="string">""</span>).strip().lower()
+    username = (claims.get(<span class="string">"username"</span>) <span class="keyword">or</span> email.split(<span class="string">"@"</span>)[<span class="number">0</span>] <span class="keyword">or</span> <span class="string">f"user{central_user_id}"</span>).strip()
+    full_name = (claims.get(<span class="string">"name"</span>) <span class="keyword">or</span> claims.get(<span class="string">"full_name"</span>) <span class="keyword">or</span> username).strip()
+
+    <span class="keyword">if</span> <span class="keyword">not</span> central_user_id:
+        <span class="keyword">raise</span> HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=<span class="string">"Token central sem utilizador."</span>)
+
+    <span class="keyword">if</span> <span class="keyword">not</span> email:
+        <span class="keyword">raise</span> HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=<span class="string">"Token central sem email."</span>)
+
+    user = db.query(User).filter(User.central_user_id == central_user_id).first()
+    <span class="keyword">if</span> <span class="keyword">not</span> user:
+        user = db.query(User).filter(User.email == email).first()
+
+    <span class="keyword">if</span> user:
+        user.central_user_id = central_user_id
+        <span class="keyword">if</span> <span class="keyword">not</span> user.name:
+            user.name = full_name
+        db.commit()
+        db.refresh(user)
+        <span class="keyword">return</span> user
+
+    user = User(
+        central_user_id=central_user_id,
+        email=email,
+        username=username,
+        name=full_name,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    <span class="keyword">return</span> user</code></pre>
+    </section>
+
+    <section>
+      <h2>Implementação FastAPI para proteger rotas</h2>
+      <pre><code><span class="keyword">from</span> fastapi <span class="keyword">import</span> Depends, HTTPException, status
+<span class="keyword">from</span> fastapi.security <span class="keyword">import</span> OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=<span class="string">"user/token"</span>)
+
+<span class="keyword">def</span> introspect_central_token(token: str) -&gt; dict:
+    <span class="keyword">return</span> _accounts_request(
+        <span class="string">"POST"</span>,
+        <span class="string">"/auth/introspect"</span>,
+        json={
+            <span class="key">"token"</span>: token,
+            <span class="key">"product_code"</span>: BLUESPARK_PRODUCT_CODE,
+        },
+    )
+
+<span class="keyword">def</span> get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    claims = introspect_central_token(token)
+    <span class="keyword">if</span> <span class="keyword">not</span> claims.get(<span class="string">"active"</span>):
+        <span class="keyword">raise</span> HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=<span class="string">"Sessao invalida."</span>)
+    <span class="keyword">return</span> sync_local_user_from_claims(db, claims)
+
+@router.get(<span class="string">"/me"</span>)
+<span class="keyword">def</span> me(current_user = Depends(get_current_user)):
+    <span class="keyword">return</span> current_user</code></pre>
+    </section>
+
+    <section>
+      <h2>Rotas FastAPI que o app consumidor normalmente expõe</h2>
+      <pre><code><span class="comment"># POST /user/token</span>
+<span class="comment"># POST /user/auth/one-tap</span>
+<span class="comment"># POST /user/password/recover</span>
+<span class="comment"># POST /user/verify_otp</span>
+<span class="comment"># POST /user/password/reset</span>
+<span class="comment"># GET  /user/profile</span>
+
+<span class="comment"># Essas rotas continuam a existir no app,</span>
+<span class="comment"># mas internamente delegam a autenticação para a BlueSpark MZ.</span></code></pre>
+    </section>
+
+    <section>
+      <h2>O que um app não deve mais fazer</h2>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>Tirar do app consumidor</h3>
+          <ul>
+            <li>Cadastro de senha local</li>
+            <li>Google login próprio</li>
+            <li>Recuperação de senha local</li>
+            <li>Emissão própria de JWT do utilizador global</li>
+            <li>Refresh token do utilizador global</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Manter no app consumidor</h3>
+          <ul>
+            <li>Perfis locais e dados do domínio</li>
+            <li>Permissões do produto</li>
+            <li>Autorização de negócio</li>
+            <li>Objetos locais ligados ao user</li>
+            <li>Admin técnico interno, se separado</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Checklist de integração</h2>
+      <div class="flow">
+        <div class="step" data-step="1">Cadastrar o <span class="inline">product_code</span> do app na BlueSpark.</div>
+        <div class="step" data-step="2">Configurar <span class="inline">BLUESPARK_ACCOUNTS_URL</span> e <span class="inline">BLUESPARK_PRODUCT_CODE</span>.</div>
+        <div class="step" data-step="3">Garantir que a tabela local tem <span class="inline">central_user_id</span>.</div>
+        <div class="step" data-step="4">Migrar login, Google auth, recovery e refresh para a BlueSpark.</div>
+        <div class="step" data-step="5">Fazer introspecção do token no backend do app.</div>
+        <div class="step" data-step="6">Criar ou sincronizar o utilizador local automaticamente.</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Leitura do problema atual no SkyVenda</h2>
+      <p>
+        Se a BlueSpark autentica e o SkyVenda não, o problema normalmente está em uma destas camadas:
+      </p>
+      <ul>
+        <li><span class="inline">product_code</span> errado ou ausente no pedido do SkyVenda.</li>
+        <li>Token emitido para BlueSpark, mas não aceito pelo backend SkyVenda.</li>
+        <li>SkyVenda ainda tenta ler JWT antigo localmente.</li>
+        <li>Falta de criação ou vínculo do user local com <span class="inline">central_user_id</span>.</li>
+        <li>Frontend do SkyVenda ainda chama rotas legadas em vez das rotas centralizadas.</li>
+      </ul>
+    </section>
+
+    <p class="footer">
+      Documento base para a arquitetura de auth central da BlueSpark MZ com apps consumidores como SkyVenda MZ, SkyPDV e futuros produtos.
+    </p>
+  </div>
+</body>
+</html>

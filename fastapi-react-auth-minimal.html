@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BlueSpark Auth Minimal React + FastAPI</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #111a2b;
+      --panel-2: #0d1524;
+      --line: #253553;
+      --text: #e8eef8;
+      --muted: #9db0ce;
+      --accent: #4ec2ff;
+      --accent-2: #7bf0bf;
+      --code: #07101d;
+      --key: #7dd3fc;
+      --string: #86efac;
+      --comment: #94a3b8;
+      --keyword: #fcd34d;
+      --num: #f9a8d4;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(78,194,255,.15), transparent 28%),
+        linear-gradient(180deg, #08101c, #0b1220);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    .wrap { width: min(1160px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; }
+    .hero, section {
+      background: rgba(17,26,43,.92);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    h1, h2, h3 { margin: 0 0 12px; line-height: 1.2; }
+    h1 { font-size: clamp(2rem, 4vw, 3.1rem); }
+    h2 { font-size: 1.35rem; margin-top: 8px; }
+    h3 { font-size: 1rem; color: var(--accent-2); }
+    p, li { color: var(--muted); }
+    .eyebrow {
+      display: inline-block; padding: 6px 10px; border-radius: 999px;
+      background: rgba(78,194,255,.12); color: var(--accent);
+      text-transform: uppercase; letter-spacing: .08em; font-size: 12px; font-weight: 700;
+    }
+    .grid { display: grid; gap: 16px; }
+    .grid-2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .card { padding: 16px; border-radius: 18px; border: 1px solid var(--line); background: var(--panel-2); }
+    .inline {
+      background: rgba(255,255,255,.06); padding: .14rem .36rem; border-radius: 8px;
+      color: var(--text); font-family: Consolas, "Courier New", monospace;
+    }
+    pre {
+      margin: 12px 0 0;
+      padding: 18px;
+      border-radius: 16px;
+      overflow-x: auto;
+      background: var(--code);
+      border: 1px solid #1d2d49;
+      font-size: .9rem;
+      line-height: 1.55;
+    }
+    code { font-family: Consolas, "Courier New", monospace; }
+    .comment { color: var(--comment); }
+    .key { color: var(--key); }
+    .string { color: var(--string); }
+    .keyword { color: var(--keyword); }
+    .num { color: var(--num); }
+    .file {
+      display: inline-block; margin-bottom: 8px; padding: 6px 10px; border-radius: 10px;
+      background: rgba(123,240,191,.08); color: var(--accent-2); font-weight: 700;
+      font-family: Consolas, "Courier New", monospace; font-size: .88rem;
+    }
+    ol { padding-left: 20px; }
+    .note {
+      margin-top: 12px; padding: 14px 16px; border-radius: 14px;
+      background: rgba(78,194,255,.08); border: 1px solid var(--line); color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <span class="eyebrow">Minimal Integration</span>
+      <h1>React + FastAPI para auth BlueSpark MZ</h1>
+      <p>
+        Aqui tens o mínimo necessário para um app consumidor autenticar com a
+        <span class="inline">BlueSpark MZ</span> usando:
+      </p>
+      <ul>
+        <li>login com conta BlueSpark no frontend React</li>
+        <li>login Google no frontend React</li>
+        <li>Google One Tap no frontend React</li>
+        <li>backend FastAPI para validar token, sincronizar user local e proteger rotas</li>
+      </ul>
+    </header>
+
+    <section>
+      <h2>Passo 1: variáveis mínimas</h2>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>Frontend React</h3>
+          <pre><code>VITE_API_URL=https://api.skyvenda.com
+VITE_BLUESPARK_ACCOUNTS_URL=https://accounts.bluesparkmz.com
+VITE_BLUESPARK_PRODUCT_CODE=skyvenda
+VITE_GOOGLE_CLIENT_ID=530160641394-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com</code></pre>
+        </div>
+        <div class="card">
+          <h3>Backend FastAPI</h3>
+          <pre><code>BLUESPARK_ACCOUNTS_URL=https://accounts.bluesparkmz.com
+BLUESPARK_PRODUCT_CODE=skyvenda
+BLUESPARK_AUTH_TIMEOUT_SECONDS=15</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Passo 2: frontend React mínimo</h2>
+      <div class="file">src/lib/authApi.ts</div>
+      <pre><code><span class="keyword">const</span> API_URL = import.meta.env.VITE_API_URL;
+<span class="keyword">const</span> ACCOUNTS_URL = import.meta.env.VITE_BLUESPARK_ACCOUNTS_URL;
+<span class="keyword">const</span> PRODUCT_CODE = import.meta.env.VITE_BLUESPARK_PRODUCT_CODE || <span class="string">"skyvenda"</span>;
+
+<span class="keyword">export</span> <span class="keyword">async</span> <span class="keyword">function</span> loginWithBlueSpark(identifier, password) {
+  <span class="keyword">const</span> res = <span class="keyword">await</span> fetch(<span class="string">`${API_URL}/user/token`</span>, {
+    method: <span class="string">"POST"</span>,
+    headers: { <span class="string">"Content-Type"</span>: <span class="string">"application/json"</span> },
+    body: JSON.stringify({ identifier, password })
+  });
+
+  <span class="keyword">const</span> data = <span class="keyword">await</span> res.json();
+  <span class="keyword">if</span> (!res.ok) <span class="keyword">throw</span> <span class="keyword">new</span> Error(data.detail || <span class="string">"Falha no login"</span>);
+  localStorage.setItem(<span class="string">"auth_token"</span>, data.access_token);
+  localStorage.setItem(<span class="string">"refresh_token"</span>, data.refresh_token || <span class="string">""</span>);
+  <span class="keyword">return</span> data;
+}
+
+<span class="keyword">export</span> <span class="keyword">async</span> <span class="keyword">function</span> loginWithGoogleOneTap(credential) {
+  <span class="keyword">const</span> res = <span class="keyword">await</span> fetch(<span class="string">`${API_URL}/user/auth/one-tap`</span>, {
+    method: <span class="string">"POST"</span>,
+    headers: { <span class="string">"Content-Type"</span>: <span class="string">"application/json"</span> },
+    body: JSON.stringify({ credential })
+  });
+
+  <span class="keyword">const</span> data = <span class="keyword">await</span> res.json();
+  <span class="keyword">if</span> (!res.ok) <span class="keyword">throw</span> <span class="keyword">new</span> Error(data.detail || <span class="string">"Falha no Google One Tap"</span>);
+  localStorage.setItem(<span class="string">"auth_token"</span>, data.access_token);
+  localStorage.setItem(<span class="string">"refresh_token"</span>, data.refresh_token || <span class="string">""</span>);
+  <span class="keyword">return</span> data;
+}
+
+<span class="keyword">export</span> <span class="keyword">function</span> buildGoogleRedirectUrl() {
+  <span class="keyword">const</span> next = encodeURIComponent(<span class="string">`${window.location.origin}/auth/success`</span>);
+  <span class="keyword">return</span> <span class="string">`${ACCOUNTS_URL}/auth/google/start?product_code=${PRODUCT_CODE}&next=${next}`</span>;
+}
+
+<span class="keyword">export</span> <span class="keyword">function</span> getAuthHeader() {
+  <span class="keyword">const</span> token = localStorage.getItem(<span class="string">"auth_token"</span>);
+  <span class="keyword">return</span> token ? { Authorization: <span class="string">`Bearer ${token}`</span> } : {};
+}</code></pre>
+
+      <div class="file">src/components/LoginForm.jsx</div>
+      <pre><code><span class="keyword">import</span> { useState } <span class="keyword">from</span> <span class="string">"react"</span>;
+<span class="keyword">import</span> { loginWithBlueSpark, buildGoogleRedirectUrl } <span class="keyword">from</span> <span class="string">"../lib/authApi"</span>;
+
+<span class="keyword">export</span> <span class="keyword">default</span> <span class="keyword">function</span> LoginForm() {
+  <span class="keyword">const</span> [identifier, setIdentifier] = useState(<span class="string">""</span>);
+  <span class="keyword">const</span> [password, setPassword] = useState(<span class="string">""</span>);
+  <span class="keyword">const</span> [error, setError] = useState(<span class="string">""</span>);
+  <span class="keyword">const</span> [loading, setLoading] = useState(<span class="keyword">false</span>);
+
+  <span class="keyword">async</span> <span class="keyword">function</span> onSubmit(e) {
+    e.preventDefault();
+    setError(<span class="string">""</span>);
+    setLoading(<span class="keyword">true</span>);
+    <span class="keyword">try</span> {
+      <span class="keyword">await</span> loginWithBlueSpark(identifier, password);
+      window.location.href = <span class="string">"/dashboard"</span>;
+    } <span class="keyword">catch</span> (err) {
+      setError(err.message);
+    } <span class="keyword">finally</span> {
+      setLoading(<span class="keyword">false</span>);
+    }
+  }
+
+  <span class="keyword">return</span> (
+    &lt;form onSubmit={onSubmit}&gt;
+      &lt;input value={identifier} onChange={(e) =&gt; setIdentifier(e.target.value)} placeholder="Email ou username" /&gt;
+      &lt;input type="password" value={password} onChange={(e) =&gt; setPassword(e.target.value)} placeholder="Password" /&gt;
+      &lt;button disabled={loading} type="submit"&gt;{loading ? "Entrando..." : "Entrar com BlueSpark"}&lt;/button&gt;
+      &lt;button type="button" onClick={() =&gt; (window.location.href = buildGoogleRedirectUrl())}&gt;
+        Entrar com Google
+      &lt;/button&gt;
+      {error ? &lt;p&gt;{error}&lt;/p&gt; : null}
+    &lt;/form&gt;
+  );
+}</code></pre>
+
+      <div class="file">src/components/GoogleOneTap.jsx</div>
+      <pre><code><span class="keyword">import</span> { useEffect, useRef } <span class="keyword">from</span> <span class="string">"react"</span>;
+<span class="keyword">import</span> { loginWithGoogleOneTap } <span class="keyword">from</span> <span class="string">"../lib/authApi"</span>;
+
+<span class="keyword">const</span> GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+<span class="keyword">export</span> <span class="keyword">default</span> <span class="keyword">function</span> GoogleOneTap() {
+  <span class="keyword">const</span> initializedRef = useRef(<span class="keyword">false</span>);
+
+  useEffect(() =&gt; {
+    <span class="keyword">if</span> (!GOOGLE_CLIENT_ID) <span class="keyword">return</span>;
+    <span class="keyword">if</span> (localStorage.getItem(<span class="string">"auth_token"</span>)) <span class="keyword">return</span>;
+
+    <span class="keyword">const</span> script = document.createElement(<span class="string">"script"</span>);
+    script.src = <span class="string">"https://accounts.google.com/gsi/client"</span>;
+    script.async = <span class="keyword">true</span>;
+    script.defer = <span class="keyword">true</span>;
+    script.onload = init;
+    document.body.appendChild(script);
+
+    <span class="keyword">function</span> init() {
+      <span class="keyword">if</span> (initializedRef.current) <span class="keyword">return</span>;
+      <span class="keyword">if</span> (!window.google?.accounts?.id) <span class="keyword">return</span>;
+
+      initializedRef.current = <span class="keyword">true</span>;
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: <span class="keyword">async</span> (response) =&gt; {
+          <span class="keyword">if</span> (!response.credential) <span class="keyword">return</span>;
+          <span class="keyword">try</span> {
+            <span class="keyword">await</span> loginWithGoogleOneTap(response.credential);
+            window.location.href = <span class="string">"/dashboard"</span>;
+          } <span class="keyword">catch</span> (err) {
+            console.error(err);
+          }
+        },
+        auto_select: <span class="keyword">false</span>,
+        cancel_on_tap_outside: <span class="keyword">false</span>,
+        use_fedcm_for_prompt: <span class="keyword">true</span>
+      });
+
+      window.google.accounts.id.prompt();
+    }
+
+    <span class="keyword">return</span> () =&gt; {
+      <span class="keyword">try</span> { window.google?.accounts?.id?.cancel(); } <span class="keyword">catch</span> {}
+    };
+  }, []);
+
+  <span class="keyword">return</span> <span class="keyword">null</span>;
+}</code></pre>
+
+      <div class="file">src/pages/AuthSuccess.jsx</div>
+      <pre><code><span class="keyword">import</span> { useEffect } <span class="keyword">from</span> <span class="string">"react"</span>;
+
+<span class="keyword">export</span> <span class="keyword">default</span> <span class="keyword">function</span> AuthSuccess() {
+  useEffect(() =&gt; {
+    <span class="keyword">const</span> params = <span class="keyword">new</span> URLSearchParams(window.location.search);
+    <span class="keyword">const</span> accessToken = params.get(<span class="string">"access_token"</span>);
+    <span class="keyword">const</span> refreshToken = params.get(<span class="string">"refresh_token"</span>);
+
+    <span class="keyword">if</span> (accessToken) {
+      localStorage.setItem(<span class="string">"auth_token"</span>, accessToken);
+      <span class="keyword">if</span> (refreshToken) localStorage.setItem(<span class="string">"refresh_token"</span>, refreshToken);
+      window.location.href = <span class="string">"/dashboard"</span>;
+    } <span class="keyword">else</span> {
+      window.location.href = <span class="string">"/login"</span>;
+    }
+  }, []);
+
+  <span class="keyword">return</span> &lt;p&gt;A concluir autenticação...&lt;/p&gt;;
+}</code></pre>
+    </section>
+
+    <section>
+      <h2>Passo 3: backend FastAPI mínimo</h2>
+      <div class="file">app/auth_client.py</div>
+      <pre><code><span class="keyword">import</span> os
+<span class="keyword">from</span> typing <span class="keyword">import</span> Any
+
+<span class="keyword">import</span> httpx
+<span class="keyword">from</span> fastapi <span class="keyword">import</span> HTTPException, status
+
+BLUESPARK_ACCOUNTS_URL = os.getenv(<span class="string">"BLUESPARK_ACCOUNTS_URL"</span>, <span class="string">"https://accounts.bluesparkmz.com"</span>).rstrip(<span class="string">"/"</span>)
+BLUESPARK_PRODUCT_CODE = os.getenv(<span class="string">"BLUESPARK_PRODUCT_CODE"</span>, <span class="string">"skyvenda"</span>)
+TIMEOUT = float(os.getenv(<span class="string">"BLUESPARK_AUTH_TIMEOUT_SECONDS"</span>, <span class="string">"15"</span>))
+
+<span class="keyword">def</span> accounts_request(method: str, path: str, *, json: dict | None = <span class="keyword">None</span>, token: str | None = <span class="keyword">None</span>) -&gt; dict[str, Any]:
+    headers = {}
+    <span class="keyword">if</span> token:
+        headers[<span class="string">"Authorization"</span>] = <span class="string">f"Bearer {token}"</span>
+
+    <span class="keyword">try</span>:
+        <span class="keyword">with</span> httpx.Client(timeout=TIMEOUT) <span class="keyword">as</span> client:
+            response = client.request(method, <span class="string">f"{BLUESPARK_ACCOUNTS_URL}{path}"</span>, json=json, headers=headers)
+    <span class="keyword">except</span> httpx.HTTPError <span class="keyword">as</span> exc:
+        <span class="keyword">raise</span> HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=<span class="string">"BlueSpark indisponivel."</span>) <span class="keyword">from</span> exc
+
+    data = response.json() <span class="keyword">if</span> response.content <span class="keyword">else</span> {}
+    <span class="keyword">if</span> response.status_code &gt;= <span class="num">400</span>:
+        <span class="keyword">raise</span> HTTPException(status_code=response.status_code, detail=data.get(<span class="string">"detail"</span>, <span class="string">"Falha na auth central."</span>))
+    <span class="keyword">return</span> data
+
+<span class="keyword">def</span> login_with_central_auth(identifier: str, password: str) -&gt; dict:
+    <span class="keyword">return</span> accounts_request(<span class="string">"POST"</span>, <span class="string">"/auth/login"</span>, json={
+        <span class="key">"identifier"</span>: identifier,
+        <span class="key">"password"</span>: password,
+        <span class="key">"product_code"</span>: BLUESPARK_PRODUCT_CODE,
+    })
+
+<span class="keyword">def</span> google_one_tap_with_central_auth(credential: str) -&gt; dict:
+    <span class="keyword">return</span> accounts_request(<span class="string">"POST"</span>, <span class="string">"/auth/google/one-tap"</span>, json={
+        <span class="key">"credential"</span>: credential,
+        <span class="key">"product_code"</span>: BLUESPARK_PRODUCT_CODE,
+    })
+
+<span class="keyword">def</span> introspect_central_token(token: str) -&gt; dict:
+    <span class="keyword">return</span> accounts_request(<span class="string">"POST"</span>, <span class="string">"/auth/introspect"</span>, json={
+        <span class="key">"token"</span>: token,
+        <span class="key">"product_code"</span>: BLUESPARK_PRODUCT_CODE,
+    })</code></pre>
+
+      <div class="file">app/models.py</div>
+      <pre><code><span class="keyword">from</span> sqlalchemy <span class="keyword">import</span> Column, Integer, String
+<span class="keyword">from</span> sqlalchemy.orm <span class="keyword">import</span> declarative_base
+
+Base = declarative_base()
+
+<span class="keyword">class</span> User(Base):
+    __tablename__ = <span class="string">"users"</span>
+
+    id = Column(Integer, primary_key=<span class="keyword">True</span>)
+    central_user_id = Column(String, unique=<span class="keyword">True</span>, index=<span class="keyword">True</span>, nullable=<span class="keyword">False</span>)
+    email = Column(String, unique=<span class="keyword">True</span>, index=<span class="keyword">True</span>, nullable=<span class="keyword">False</span>)
+    username = Column(String, unique=<span class="keyword">True</span>, index=<span class="keyword">True</span>, nullable=<span class="keyword">False</span>)
+    name = Column(String, nullable=<span class="keyword">True</span>)</code></pre>
+
+      <div class="file">app/schemas.py</div>
+      <pre><code><span class="keyword">from</span> pydantic <span class="keyword">import</span> BaseModel
+
+<span class="keyword">class</span> LoginRequest(BaseModel):
+    identifier: str
+    password: str
+
+<span class="keyword">class</span> GoogleOneTapRequest(BaseModel):
+    credential: str</code></pre>
+
+      <div class="file">app/security.py</div>
+      <pre><code><span class="keyword">from</span> fastapi <span class="keyword">import</span> Depends, HTTPException, status
+<span class="keyword">from</span> fastapi.security <span class="keyword">import</span> OAuth2PasswordBearer
+<span class="keyword">from</span> sqlalchemy.orm <span class="keyword">import</span> Session
+
+<span class="keyword">from</span> .auth_client <span class="keyword">import</span> introspect_central_token
+<span class="keyword">from</span> .database <span class="keyword">import</span> get_db
+<span class="keyword">from</span> .models <span class="keyword">import</span> User
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=<span class="string">"/user/token"</span>)
+
+<span class="keyword">def</span> sync_local_user_from_claims(db: Session, claims: dict) -&gt; User:
+    central_user_id = str(claims.get(<span class="string">"central_user_id"</span>) <span class="keyword">or</span> claims.get(<span class="string">"sub"</span>) <span class="keyword">or</span> <span class="string">""</span>).strip()
+    email = (claims.get(<span class="string">"email"</span>) <span class="keyword">or</span> <span class="string">""</span>).strip().lower()
+    username = (claims.get(<span class="string">"username"</span>) <span class="keyword">or</span> email.split(<span class="string">"@"</span>)[<span class="num">0</span>] <span class="keyword">or</span> <span class="string">f"user{central_user_id}"</span>).strip()
+    name = (claims.get(<span class="string">"name"</span>) <span class="keyword">or</span> claims.get(<span class="string">"full_name"</span>) <span class="keyword">or</span> username).strip()
+
+    <span class="keyword">if</span> <span class="keyword">not</span> central_user_id:
+        <span class="keyword">raise</span> HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=<span class="string">"Token sem central_user_id."</span>)
+    <span class="keyword">if</span> <span class="keyword">not</span> email:
+        <span class="keyword">raise</span> HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=<span class="string">"Token sem email."</span>)
+
+    user = db.query(User).filter(User.central_user_id == central_user_id).first()
+    <span class="keyword">if</span> <span class="keyword">not</span> user:
+        user = db.query(User).filter(User.email == email).first()
+
+    <span class="keyword">if</span> user:
+        user.central_user_id = central_user_id
+        user.email = email
+        <span class="keyword">if</span> <span class="keyword">not</span> user.name:
+            user.name = name
+        db.commit()
+        db.refresh(user)
+        <span class="keyword">return</span> user
+
+    user = User(central_user_id=central_user_id, email=email, username=username, name=name)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    <span class="keyword">return</span> user
+
+<span class="keyword">def</span> get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -&gt; User:
+    claims = introspect_central_token(token)
+    <span class="keyword">if</span> <span class="keyword">not</span> claims.get(<span class="string">"active"</span>):
+        <span class="keyword">raise</span> HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=<span class="string">"Sessao invalida."</span>)
+    <span class="keyword">return</span> sync_local_user_from_claims(db, claims)</code></pre>
+
+      <div class="file">app/routes.py</div>
+      <pre><code><span class="keyword">from</span> fastapi <span class="keyword">import</span> APIRouter, Depends
+<span class="keyword">from</span> .auth_client <span class="keyword">import</span> google_one_tap_with_central_auth, login_with_central_auth
+<span class="keyword">from</span> .schemas <span class="keyword">import</span> GoogleOneTapRequest, LoginRequest
+<span class="keyword">from</span> .security <span class="keyword">import</span> get_current_user
+
+router = APIRouter()
+
+@router.post(<span class="string">"/user/token"</span>)
+<span class="keyword">def</span> login(payload: LoginRequest):
+    <span class="keyword">return</span> login_with_central_auth(payload.identifier, payload.password)
+
+@router.post(<span class="string">"/user/auth/one-tap"</span>)
+<span class="keyword">def</span> google_one_tap(payload: GoogleOneTapRequest):
+    <span class="keyword">return</span> google_one_tap_with_central_auth(payload.credential)
+
+@router.get(<span class="string">"/user/profile"</span>)
+<span class="keyword">def</span> profile(current_user = Depends(get_current_user)):
+    <span class="keyword">return</span> {
+        <span class="key">"id"</span>: current_user.id,
+        <span class="key">"central_user_id"</span>: current_user.central_user_id,
+        <span class="key">"email"</span>: current_user.email,
+        <span class="key">"username"</span>: current_user.username,
+        <span class="key">"name"</span>: current_user.name,
+    }</code></pre>
+
+      <div class="file">app/main.py</div>
+      <pre><code><span class="keyword">from</span> fastapi <span class="keyword">import</span> FastAPI
+<span class="keyword">from</span> fastapi.middleware.cors <span class="keyword">import</span> CORSMiddleware
+<span class="keyword">from</span> .routes <span class="keyword">import</span> router
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[<span class="string">"http://localhost:5173"</span>, <span class="string">"https://skyvenda.com"</span>],
+    allow_credentials=<span class="keyword">False</span>,
+    allow_methods=[<span class="string">"*"</span>],
+    allow_headers=[<span class="string">"*"</span>],
+)
+
+app.include_router(router)</code></pre>
+    </section>
+
+    <section>
+      <h2>Passo 4: validação passo a passo</h2>
+      <ol>
+        <li>O utilizador abre o frontend React em <span class="inline">/login</span>.</li>
+        <li>Se usar senha, o React chama <span class="inline">POST /user/token</span> no backend do app.</li>
+        <li>O backend FastAPI chama <span class="inline">POST /auth/login</span> na BlueSpark com <span class="inline">product_code</span>.</li>
+        <li>A BlueSpark devolve <span class="inline">access_token</span> e <span class="inline">refresh_token</span>.</li>
+        <li>O frontend guarda o token e passa a chamar as rotas protegidas do app.</li>
+        <li>Ao abrir <span class="inline">/user/profile</span>, o backend lê o <span class="inline">Bearer token</span>.</li>
+        <li>O backend faz <span class="inline">/auth/introspect</span> na BlueSpark.</li>
+        <li>Se <span class="inline">active=true</span>, o backend procura o user local por <span class="inline">central_user_id</span>.</li>
+        <li>Se o user local não existir, cria automaticamente.</li>
+        <li>Se usar Google One Tap, o React recebe <span class="inline">credential</span> do Google e chama <span class="inline">POST /user/auth/one-tap</span>.</li>
+        <li>O backend envia essa credential para <span class="inline">/auth/google/one-tap</span> da BlueSpark.</li>
+        <li>Se usar Google redirect normal, o botão leva o utilizador para <span class="inline">/auth/google/start</span> da BlueSpark.</li>
+        <li>Depois do callback central, a BlueSpark redireciona para <span class="inline">/auth/success</span> no app com os tokens.</li>
+        <li>O frontend lê os tokens da query string, guarda e entra no app.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Passo 5: o que validar quando não funcionar</h2>
+      <ul>
+        <li>Confirmar que o <span class="inline">product_code</span> enviado é o do app certo.</li>
+        <li>Confirmar que o token vai no header <span class="inline">Authorization: Bearer ...</span>.</li>
+        <li>Confirmar que a resposta de <span class="inline">/auth/introspect</span> vem com <span class="inline">active=true</span>.</li>
+        <li>Confirmar que o token contém <span class="inline">sub</span>, <span class="inline">email</span> e, idealmente, <span class="inline">central_user_id</span>.</li>
+        <li>Confirmar que o utilizador local está a ser criado ou atualizado no backend do app.</li>
+        <li>Confirmar que o frontend não continua a chamar rotas antigas de login local.</li>
+        <li>Confirmar que o Google Client ID é o mesmo da BlueSpark e que os origins estão autorizados.</li>
+      </ul>
+      <div class="note">
+        Regra prática: o frontend pode iniciar a auth, mas a verdade da sessão fica sempre na BlueSpark e o backend do app só confia depois de validar o token com a auth central.
+      </div>
+    </section>
+  </div>
+</body>
+</html>
