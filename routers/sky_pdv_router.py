@@ -569,6 +569,7 @@ def get_sales_report_pdf(
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
     currency = terminal.currency or "MT"
  
     def _fmt_dt(dt: Optional[datetime]) -> str:
