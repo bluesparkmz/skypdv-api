@@ -8,7 +8,7 @@ import io
 
 from database import get_db
 from auth import get_current_user
-from models import User, PDVStockMovement
+from models import User, PDVStockMovement, MovementType
 import schemas
 from controllers import controller
 import openpyxl
