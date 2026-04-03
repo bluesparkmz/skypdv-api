@@ -215,7 +215,9 @@ def get_or_create_terminal(db: Session, user_id: int, create_if_missing: bool = 
 
 
 def get_terminal_required(db: Session, user_id: int):
-    terminal = get_or_create_terminal(db, user_id, create_if_missing=False)
+    # Para melhorar DX: se o usuário ainda não configurou o PDV, criamos automaticamente
+    # um terminal básico em vez de devolver 404. A tela de setup pode então atualizar os dados.
+    terminal = get_or_create_terminal(db, user_id, create_if_missing=True)
     if not terminal:
         raise HTTPException(status_code=404, detail="PDV not setup")
     return terminal

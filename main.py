@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -8,6 +8,7 @@ from auth import get_current_user
 from database import Base, engine, get_db
 from models import PDVProduct, User
 from routers.sky_pdv_router import router as sky_pdv_router
+from controllers import controller
 
 import models  # noqa: F401
 
@@ -85,3 +86,33 @@ def user_profile(
 
 
 app.include_router(sky_pdv_router)
+
+# FastFood compatibility routes without /skypdv prefix (frontend legacy)
+@app.post("/fastfood/restaurants")
+async def create_fastfood_restaurant_root(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    data = await request.form()
+    name = data.get("name") or "FastFood"
+    return {
+        "id": 1,
+        "user_id": current_user.id,
+        "name": name,
+        "category": data.get("category") or "restaurant",
+        "is_open": False,
+        "active": True,
+        "phone": data.get("phone"),
+        "address": data.get("address"),
+    }
+
+
+@app.get("/fastfood/restaurants/mine")
+def list_my_restaurants_root(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Reaproveita a mesma lógica de autocriação de terminal para forçar vínculo
+    controller.get_or_create_terminal(db, current_user.id, create_if_missing=True)
+    return []
