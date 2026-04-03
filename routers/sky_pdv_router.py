@@ -1,15 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional
 from datetime import datetime
 import io
 
 from database import get_db
 from auth import get_current_user
-from models import User
+from models import User, PDVStockMovement
 import schemas
 from controllers import controller
+import openpyxl
+from openpyxl.utils import get_column_letter
 
 # Criar router principal
 router = APIRouter(
@@ -740,6 +743,85 @@ def get_sales_report_pdf(
     headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
     return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
 
+
+@router.get("/reports/sales-summary.xlsx")
+def get_sales_report_excel(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Exporta o resumo de vendas em Excel (XLSX).
+    Usa os mesmos filtros do relatório PDF.
+    """
+    terminal = controller.get_terminal_required(db, current_user.id)
+
+    # Datas padrão: mês atual
+    if not start_date:
+        start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        if start_date.hour == 0 and start_date.minute == 0 and start_date.second == 0:
+            start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if not end_date:
+        end_date = datetime.utcnow()
+    else:
+        if end_date.hour == 0 and end_date.minute == 0 and end_date.second == 0:
+            end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
+    summary = controller.get_sales_summary(db, terminal.id, start_date, end_date, filter_user_id)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Resumo de Vendas"
+
+    rows = [
+        ("Período Início", start_date.strftime("%d/%m/%Y %H:%M")),
+        ("Período Fim", end_date.strftime("%d/%m/%Y %H:%M")),
+        ("Total Vendas", summary["total_sales"]),
+        ("Receita Bruta", summary["total_revenue"]),
+        ("Custo Total", summary["total_cost"]),
+        ("Lucro Bruto", summary["gross_profit"]),
+        ("Ticket Médio", summary["average_sale_value"]),
+        ("Itens Vendidos", summary["total_items_sold"]),
+        ("Descontos", summary["total_discounts"]),
+        ("Impostos", summary["total_taxes"]),
+        ("Vendas Dinheiro", summary["cash_sales"]),
+        ("Vendas Cartão", summary["card_sales"]),
+        ("Vendas Skywallet", summary["skywallet_sales"]),
+        ("Vendas Mpesa", summary["mpesa_sales"]),
+        ("Vendas Anuladas", summary["voided_sales"]),
+        ("Valor Anulado", summary["voided_amount"]),
+    ]
+
+    ws.append(["Métrica", "Valor"])
+    for name, value in rows:
+        ws.append([name, value])
+
+    # Auto ajuste de largura
+    for col in range(1, 3):
+        max_length = 0
+        col_letter = get_column_letter(col)
+        for cell in ws[col_letter]:
+            try:
+                max_length = max(max_length, len(str(cell.value)))
+            except Exception:
+                pass
+        ws.column_dimensions[col_letter].width = max_length + 2
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    filename = f"sales-summary-{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}.xlsx"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Access-Control-Expose-Headers": "Content-Disposition",
+    }
+    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
 @router.get("/reports/products.pdf")
 def get_products_report_pdf(
     db: Session = Depends(get_db),
