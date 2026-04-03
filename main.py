@@ -28,6 +28,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "https://skypdv.bluesparkmz.com",
+        "https://skypdv.skyvenda.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -84,4 +85,3 @@ def user_profile(
 
 
 app.include_router(sky_pdv_router)
-
