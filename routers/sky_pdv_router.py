@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -1149,3 +1149,36 @@ def get_finance_summary(
         end_date = datetime.utcnow()
     filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
     return controller.get_financial_summary(db, terminal.id, start_date, end_date, filter_user_id)
+
+
+# ===================================================================
+# FastFood stubs (compat for SkyPDV frontend)
+# ===================================================================
+
+
+@router.post("/fastfood/restaurants")
+async def create_fastfood_restaurant(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    data = await request.form()
+    name = data.get("name") or "FastFood"
+    return {
+        "id": 1,
+        "user_id": current_user.id,
+        "name": name,
+        "category": data.get("category") or "restaurant",
+        "is_open": False,
+        "active": True,
+        "phone": data.get("phone"),
+        "address": data.get("address"),
+    }
+
+
+@router.get("/fastfood/restaurants/mine")
+def list_my_restaurants(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return []
