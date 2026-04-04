@@ -2,10 +2,9 @@ import os
 import requests
 import base64
 from typing import Optional
-from urllib.parse import quote_plus
-
 BASE_WHATSAPP = os.getenv("WHATSAPP_BASE_URL", "https://bluesparkmz-api-sap.up.railway.app")
-INSTANCE = quote_plus(os.getenv("WHATSAPP_INSTANCE", "Skyvenda MZ"))
+# Não encodamos o nome da instância; alguns servidores não aceitam '+'
+INSTANCE = os.getenv("WHATSAPP_INSTANCE", "Skyvenda MZ")
 
 WHATSAPP_URL = os.getenv("WHATSAPP_URL", f"{BASE_WHATSAPP}/message/sendMedia/{INSTANCE}")
 WHATSAPP_TEXT_URL = os.getenv("WHATSAPP_TEXT_URL", f"{BASE_WHATSAPP}/message/sendText/{INSTANCE}")
