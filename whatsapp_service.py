@@ -9,6 +9,7 @@ INSTANCE = quote_plus(os.getenv("WHATSAPP_INSTANCE", "Skyvenda MZ"))
 
 WHATSAPP_URL = os.getenv("WHATSAPP_URL", f"{BASE_WHATSAPP}/message/sendMedia/{INSTANCE}")
 WHATSAPP_TEXT_URL = os.getenv("WHATSAPP_TEXT_URL", f"{BASE_WHATSAPP}/message/sendText/{INSTANCE}")
+WHATSAPP_FILE_URL = os.getenv("WHATSAPP_FILE_URL", f"{BASE_WHATSAPP}/message/sendFile/{INSTANCE}")
 API_KEY = os.getenv("API_KEY_WHATSAPP")
 
 
@@ -51,9 +52,21 @@ def send_whatsapp_file(number: str, filename: str, mime: str, content: bytes, ca
     headers = {"apikey": API_KEY, "Content-Type": "application/json"}
     try:
         resp = requests.post(WHATSAPP_URL, json=payload, headers=headers, timeout=30)
-        if resp.status_code >= 400:
-            print("WhatsApp sendMedia failed", resp.status_code, resp.text)
-        return resp
+        if resp.status_code < 300:
+            return resp
+        print("WhatsApp sendMedia failed", resp.status_code, resp.text)
     except Exception as e:
         print("WhatsApp sendMedia exception", e)
+
+    # Fallback: sendFile multipart (algumas instâncias exigem esse formato)
+    files = {"file": (filename, content, mime)}
+    data = {"number": number, "caption": caption or "", "delay": 0}
+    headers_mp = {"apikey": API_KEY}
+    try:
+        resp2 = requests.post(WHATSAPP_FILE_URL, data=data, files=files, headers=headers_mp, timeout=30)
+        if resp2.status_code >= 400:
+            print("WhatsApp sendFile failed", resp2.status_code, resp2.text)
+        return resp2
+    except Exception as e2:
+        print("WhatsApp sendFile exception", e2)
         return None
