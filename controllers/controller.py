@@ -2551,10 +2551,9 @@ def void_sale(db: Session, sale_id: int, terminal_id: int, user_id: int):
     if not sale:
         raise HTTPException(status_code=404, detail="Sale not found")
 
-    # Caixas normais só podem anular suas próprias vendas
+    # Apenas administradores podem anular vendas
     if not is_terminal_admin(db, terminal_id, user_id):
-        if sale.created_by != user_id:
-            raise HTTPException(status_code=403, detail="Not allowed to void this sale")
+        raise HTTPException(status_code=403, detail="Only admin can void sales")
         
     if sale.status == "voided":
         raise HTTPException(status_code=400, detail="Sale is already voided")
