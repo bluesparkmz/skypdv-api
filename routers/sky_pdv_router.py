@@ -761,8 +761,9 @@ def get_sales_report_pdf(
     headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
 
     if phone:
-        send_whatsapp_file(phone, filename, "application/pdf", buffer.getvalue())
-        send_whatsapp_text(phone, f"Seu relatório de vendas {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} do SkyPDV.")
+        caption = f"Relatório de vendas {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} (SkyPDV)."
+        send_whatsapp_file(phone, filename, "application/pdf", buffer.getvalue(), caption=caption)
+        send_whatsapp_text(phone, caption)
 
     return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
 
@@ -847,8 +848,9 @@ def get_sales_report_excel(
     }
 
     if phone:
-        send_whatsapp_file(phone, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer.getvalue())
-        send_whatsapp_text(phone, f"Seu relatório de vendas (Excel) {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} do SkyPDV.")
+        caption = f"Relatório de vendas (Excel) {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} (SkyPDV)."
+        send_whatsapp_file(phone, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer.getvalue(), caption=caption)
+        send_whatsapp_text(phone, caption)
 
     return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
 @router.get("/reports/products.pdf")
@@ -1364,8 +1366,9 @@ def get_finance_summary_pdf(
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
 
     if phone:
-        send_whatsapp_file(phone, filename, "application/pdf", buffer.getvalue())
-        send_whatsapp_text(phone, f"Resumo financeiro {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} do SkyPDV.")
+        caption = f"Resumo financeiro {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} (SkyPDV)."
+        send_whatsapp_file(phone, filename, "application/pdf", buffer.getvalue(), caption=caption)
+        send_whatsapp_text(phone, caption)
 
     return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
 
@@ -1418,8 +1421,9 @@ def get_finance_summary_excel(
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
 
     if phone:
-        send_whatsapp_file(phone, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bio.getvalue())
-        send_whatsapp_text(phone, f"Resumo financeiro (Excel) {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} do SkyPDV.")
+        caption = f"Resumo financeiro (Excel) {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} (SkyPDV)."
+        send_whatsapp_file(phone, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bio.getvalue(), caption=caption)
+        send_whatsapp_text(phone, caption)
 
     return StreamingResponse(bio, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
 

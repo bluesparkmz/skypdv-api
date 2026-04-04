@@ -29,9 +29,10 @@ def send_whatsapp_text(number: str, text: str) -> Optional[requests.Response]:
         return None
 
 
-def send_whatsapp_file(number: str, filename: str, mime: str, content: bytes) -> Optional[requests.Response]:
+def send_whatsapp_file(number: str, filename: str, mime: str, content: bytes, caption: str = "") -> Optional[requests.Response]:
     """
-    Envia um documento (PDF/XLSX) para o número informado.
+    Envia um documento (PDF/XLSX) para o número informado via Evolution API.
+    Campos aceitos: number, caption, file (multipart), fileName (fallback), delay.
     """
     if not API_KEY or not number:
         return None
@@ -41,10 +42,12 @@ def send_whatsapp_file(number: str, filename: str, mime: str, content: bytes) ->
     }
     data = {
         "number": number,
+        "caption": caption or "",
+        "fileName": filename,
         "delay": 0,
     }
     headers = {"apikey": API_KEY}
     try:
-        return requests.post(WHATSAPP_URL, data=data, files=files, headers=headers, timeout=20)
+        return requests.post(WHATSAPP_URL, data=data, files=files, headers=headers, timeout=30)
     except Exception:
         return None
