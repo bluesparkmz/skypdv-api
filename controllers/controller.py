@@ -1150,10 +1150,10 @@ def get_current_register(db: Session, terminal_id: int, user_id: Optional[int] =
     return query.order_by(desc(PDVCashRegister.opened_at)).first()
 
 def open_register(db: Session, data: schemas.PDVCashRegisterOpen, terminal_id: int, user_id: int):
-    # Verificar se já tem caixa aberto
-    existing = get_current_register(db, terminal_id)
+    # Verificar se o usuário já tem caixa aberto (não bloqueia outros usuários)
+    existing = get_current_register(db, terminal_id, user_id=user_id)
     if existing:
-        raise HTTPException(status_code=400, detail="There is already an open cash register")
+        raise HTTPException(status_code=400, detail="You already have an open cash register")
         
     register = PDVCashRegister(
         terminal_id=terminal_id,
