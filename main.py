@@ -99,6 +99,22 @@ def user_profile(
     }
 
 
+@app.post("/user/phone")
+def update_phone(
+    phone: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Simples: atualizar telefone do usuário autenticado
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if not user:
+        return {"status": "error", "message": "User not found"}
+    user.phone = phone
+    db.add(user)
+    db.commit()
+    return {"status": "ok", "phone": phone}
+
+
 app.include_router(sky_pdv_router)
 
 # FastFood compatibility routes without /skypdv prefix (frontend legacy)
