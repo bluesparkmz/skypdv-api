@@ -2,15 +2,13 @@ import os
 import requests
 import base64
 from typing import Optional
+from urllib.parse import quote_plus
 
-WHATSAPP_URL = os.getenv(
-    "WHATSAPP_URL",
-    "https://bluesparkmz-api-sap.up.railway.app/message/sendMedia/Skyvenda MZ",
-)
-WHATSAPP_TEXT_URL = os.getenv(
-    "WHATSAPP_TEXT_URL",
-    "https://bluesparkmz-api-sap.up.railway.app/message/sendText/Skyvenda MZ",
-)
+BASE_WHATSAPP = os.getenv("WHATSAPP_BASE_URL", "https://bluesparkmz-api-sap.up.railway.app")
+INSTANCE = quote_plus(os.getenv("WHATSAPP_INSTANCE", "Skyvenda MZ"))
+
+WHATSAPP_URL = os.getenv("WHATSAPP_URL", f"{BASE_WHATSAPP}/message/sendMedia/{INSTANCE}")
+WHATSAPP_TEXT_URL = os.getenv("WHATSAPP_TEXT_URL", f"{BASE_WHATSAPP}/message/sendText/{INSTANCE}")
 API_KEY = os.getenv("API_KEY_WHATSAPP")
 
 
@@ -52,6 +50,10 @@ def send_whatsapp_file(number: str, filename: str, mime: str, content: bytes, ca
     }
     headers = {"apikey": API_KEY, "Content-Type": "application/json"}
     try:
-        return requests.post(WHATSAPP_URL, json=payload, headers=headers, timeout=30)
-    except Exception:
+        resp = requests.post(WHATSAPP_URL, json=payload, headers=headers, timeout=30)
+        if resp.status_code >= 400:
+            print("WhatsApp sendMedia failed", resp.status_code, resp.text)
+        return resp
+    except Exception as e:
+        print("WhatsApp sendMedia exception", e)
         return None
