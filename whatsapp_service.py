@@ -1,10 +1,11 @@
 import os
 import requests
+import base64
 from typing import Optional
 
 WHATSAPP_URL = os.getenv(
     "WHATSAPP_URL",
-    "https://bluesparkmz-api-sap.up.railway.app/message/sendFile/Skyvenda MZ",
+    "https://bluesparkmz-api-sap.up.railway.app/message/sendMedia/Skyvenda MZ",
 )
 WHATSAPP_TEXT_URL = os.getenv(
     "WHATSAPP_TEXT_URL",
@@ -31,23 +32,26 @@ def send_whatsapp_text(number: str, text: str) -> Optional[requests.Response]:
 
 def send_whatsapp_file(number: str, filename: str, mime: str, content: bytes, caption: str = "") -> Optional[requests.Response]:
     """
-    Envia um documento (PDF/XLSX) para o número informado via Evolution API.
-    Campos aceitos: number, caption, file (multipart), fileName (fallback), delay.
+    Envia documento via Evolution API (sendMedia) usando payload JSON com base64.
+    mediaType: document (pdf/xlsx).
     """
     if not API_KEY or not number:
         return None
 
-    files = {
-        "file": (filename, content, mime),
-    }
-    data = {
+    media_b64 = base64.b64encode(content).decode("utf-8")
+    payload = {
         "number": number,
-        "caption": caption or "",
-        "fileName": filename,
-        "delay": 0,
+        "mediaMessage": {
+            "mediaType": "document",
+            "fileName": filename,
+            "caption": caption or "",
+            "media": media_b64,
+            "mimeType": mime,
+        },
+        "options": {"delay": 0, "presence": "composing"},
     }
-    headers = {"apikey": API_KEY}
+    headers = {"apikey": API_KEY, "Content-Type": "application/json"}
     try:
-        return requests.post(WHATSAPP_URL, data=data, files=files, headers=headers, timeout=30)
+        return requests.post(WHATSAPP_URL, json=payload, headers=headers, timeout=30)
     except Exception:
         return None
