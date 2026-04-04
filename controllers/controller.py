@@ -1199,6 +1199,38 @@ def close_register(db: Session, data: schemas.PDVCashRegisterClose, terminal_id:
     db.refresh(register)
     return register
 
+def list_cash_registers(
+    db: Session,
+    terminal_id: int,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    user_id: Optional[int] = None,
+):
+    query = db.query(PDVCashRegister).filter(PDVCashRegister.terminal_id == terminal_id)
+    if start_date:
+        query = query.filter(PDVCashRegister.opened_at >= start_date)
+    if end_date:
+        query = query.filter(PDVCashRegister.opened_at <= end_date)
+    if user_id:
+        query = query.filter(PDVCashRegister.user_id == user_id)
+    return query.order_by(desc(PDVCashRegister.opened_at)).all()
+
+def list_cash_registers(
+    db: Session,
+    terminal_id: int,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    user_id: Optional[int] = None,
+):
+    query = db.query(PDVCashRegister).filter(PDVCashRegister.terminal_id == terminal_id)
+    if start_date:
+        query = query.filter(PDVCashRegister.opened_at >= start_date)
+    if end_date:
+        query = query.filter(PDVCashRegister.opened_at <= end_date)
+    if user_id:
+        query = query.filter(PDVCashRegister.user_id == user_id)
+    return query.order_by(desc(PDVCashRegister.opened_at)).all()
+
 # ===================================================================
 # Sales
 # ===================================================================

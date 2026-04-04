@@ -391,6 +391,22 @@ def close_register(
     controller.require_terminal_permission(db, terminal.id, current_user.id, "can_open_cash_register")
     return controller.close_register(db, data, terminal.id, current_user.id)
 
+
+@router.get("/cash-register/history", response_model=List[schemas.PDVCashRegister])
+def list_cash_registers(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Histórico de caixas (apenas admins podem filtrar por usuário)."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    # Se não for admin, força usar apenas o próprio user_id
+    if not controller.is_terminal_admin(db, terminal.id, current_user.id):
+        user_id = current_user.id
+    return controller.list_cash_registers(db, terminal.id, start_date, end_date, user_id)
+
 # ===================================================================
 # Sales Endpoints
 # ===================================================================
