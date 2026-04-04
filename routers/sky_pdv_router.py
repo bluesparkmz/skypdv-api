@@ -13,6 +13,7 @@ import schemas
 from controllers import controller
 import openpyxl
 from openpyxl.utils import get_column_letter
+from whatsapp_service import send_whatsapp_file, send_whatsapp_text
 
 # Criar router principal
 router = APIRouter(
@@ -561,6 +562,7 @@ def get_sales_report_pdf(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     user_id: Optional[int] = None,
+    phone: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -754,9 +756,14 @@ def get_sales_report_pdf(
 
     doc.build(story)
     buffer.seek(0)
- 
+
     filename = f"Relatorio_Vendas_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.pdf"
     headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
+
+    if phone:
+        send_whatsapp_file(phone, filename, "application/pdf", buffer.getvalue())
+        send_whatsapp_text(phone, f"Seu relatório de vendas {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} do SkyPDV.")
+
     return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
 
 
@@ -765,6 +772,7 @@ def get_sales_report_excel(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     user_id: Optional[int] = None,
+    phone: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -837,6 +845,11 @@ def get_sales_report_excel(
         "Content-Disposition": f'attachment; filename="{filename}"',
         "Access-Control-Expose-Headers": "Content-Disposition",
     }
+
+    if phone:
+        send_whatsapp_file(phone, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer.getvalue())
+        send_whatsapp_text(phone, f"Seu relatório de vendas (Excel) {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} do SkyPDV.")
+
     return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
 @router.get("/reports/products.pdf")
 def get_products_report_pdf(
@@ -1254,6 +1267,7 @@ def get_finance_summary_pdf(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     user_id: Optional[int] = None,
+    phone: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1348,6 +1362,11 @@ def get_finance_summary_pdf(
     buffer.seek(0)
     filename = f"financeiro_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.pdf"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+
+    if phone:
+        send_whatsapp_file(phone, filename, "application/pdf", buffer.getvalue())
+        send_whatsapp_text(phone, f"Resumo financeiro {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} do SkyPDV.")
+
     return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
 
 
@@ -1356,6 +1375,7 @@ def get_finance_summary_excel(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     user_id: Optional[int] = None,
+    phone: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1396,6 +1416,11 @@ def get_finance_summary_excel(
     bio.seek(0)
     filename = f"financeiro_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+
+    if phone:
+        send_whatsapp_file(phone, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bio.getvalue())
+        send_whatsapp_text(phone, f"Resumo financeiro (Excel) {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} do SkyPDV.")
+
     return StreamingResponse(bio, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
 
 
