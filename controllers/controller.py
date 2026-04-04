@@ -1967,7 +1967,7 @@ def get_detailed_yearly_report(db: Session, terminal_id: int, year: int, user_id
         "comparison_previous_year": comparison
     }
 
-def get_top_products_report(db: Session, terminal_id: int, start_date: datetime, end_date: datetime, limit: int = 20):
+def get_top_products_report(db: Session, terminal_id: int, start_date: datetime, end_date: datetime, limit: int = 20, user_id: Optional[int] = None):
     """Relatório de produtos mais vendidos em um período"""
     products_query = db.query(
         PDVSaleItem.product_id,
@@ -1983,7 +1983,12 @@ def get_top_products_report(db: Session, terminal_id: int, start_date: datetime,
         PDVSale.status == "completed",
         PDVSale.created_at >= start_date,
         PDVSale.created_at <= end_date
-    ).group_by(
+    )
+
+    if user_id:
+        products_query = products_query.filter(PDVSale.created_by == user_id)
+
+    products_query = products_query.group_by(
         PDVSaleItem.product_id,
         PDVSaleItem.product_name,
         PDVProduct.category

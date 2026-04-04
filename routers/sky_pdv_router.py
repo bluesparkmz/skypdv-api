@@ -694,7 +694,7 @@ def get_sales_report_pdf(
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Produtos mais vendidos (Top 30)", styles["Heading3"]))
-    top_products = controller.get_top_products_report(db, terminal.id, start_date, end_date, limit=30)
+    top_products = controller.get_top_products_report(db, terminal.id, start_date, end_date, limit=30, user_id=filter_user_id)
     items_table_data = [["Produto", "Qtd", "Receita", "Lucro"]]
     for p in top_products:
         items_table_data.append(
@@ -1248,6 +1248,155 @@ def get_finance_summary(
         end_date = datetime.utcnow()
     filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
     return controller.get_financial_summary(db, terminal.id, start_date, end_date, filter_user_id)
+
+@router.get("/finance/summary.pdf")
+def get_finance_summary_pdf(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    if not start_date:
+        start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if not end_date:
+        end_date = datetime.utcnow()
+    filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
+
+    summary = controller.get_financial_summary(db, terminal.id, start_date, end_date, filter_user_id)
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    currency = terminal.currency or "MT"
+
+    def fmt_amt(v):
+        try:
+            return f"{float(v):,.2f} {currency}"
+        except Exception:
+            return f"{v} {currency}"
+
+    story = []
+    title = f"Resumo Financeiro - {terminal.name or 'SkyPDV'}"
+    story.append(Paragraph(title, styles["Title"]))
+    story.append(Spacer(1, 8))
+    story.append(
+        Paragraph(
+            f"Período: {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}",
+            styles["Normal"],
+        )
+    )
+    story.append(Spacer(1, 12))
+
+    # Totais
+    totals_data = [
+        ["Entradas (vendas)", fmt_amt(summary["gross_revenue"])],
+        ["Lucro bruto", fmt_amt(summary["gross_profit"])],
+        ["Saídas (despesas)", fmt_amt(summary["total_expenses"])],
+        ["Lucro líquido", fmt_amt(summary["net_profit"])],
+        ["Nº vendas", str(summary["sales_count"])],
+        ["Nº despesas", str(summary["expenses_count"])],
+    ]
+    totals_table = Table([["Métrica", "Valor"]] + totals_data, colWidths=[220, 200])
+    totals_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(totals_table)
+    story.append(Spacer(1, 12))
+
+    # Breakdown
+    breakdown = summary.get("expense_breakdown") or []
+    story.append(Paragraph("Despesas por categoria", styles["Heading3"]))
+    if breakdown:
+        rows = [["Categoria", "Valor"]]
+        for item in breakdown:
+            rows.append(
+                [
+                    item.get("category_name") or "Sem categoria",
+                    fmt_amt(item.get("total_amount") or 0),
+                ]
+            )
+        table = Table(rows, colWidths=[260, 160])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ]
+            )
+        )
+        story.append(table)
+    else:
+        story.append(Paragraph("Sem despesas no período.", styles["Normal"]))
+
+    doc.build(story)
+    buffer.seek(0)
+    filename = f"financeiro_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
+
+
+@router.get("/finance/summary.xlsx")
+def get_finance_summary_excel(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    if not start_date:
+        start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if not end_date:
+        end_date = datetime.utcnow()
+    filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
+
+    summary = controller.get_financial_summary(db, terminal.id, start_date, end_date, filter_user_id)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Resumo Financeiro"
+
+    ws.append(["Período", f"{start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"])
+    ws.append([])
+    ws.append(["Métrica", "Valor"])
+    ws.append(["Entradas (vendas)", summary["gross_revenue"]])
+    ws.append(["Lucro bruto", summary["gross_profit"]])
+    ws.append(["Saídas (despesas)", summary["total_expenses"]])
+    ws.append(["Lucro líquido", summary["net_profit"]])
+    ws.append(["Nº vendas", summary["sales_count"]])
+    ws.append(["Nº despesas", summary["expenses_count"]])
+
+    ws.append([])
+    ws.append(["Despesas por categoria"])
+    ws.append(["Categoria", "Valor"])
+    for item in summary.get("expense_breakdown") or []:
+        ws.append([item.get("category_name") or "Sem categoria", item.get("total_amount") or 0])
+
+    # Ajustar larguras
+    for col in range(1, 3):
+        ws.column_dimensions[get_column_letter(col)].width = 28
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    filename = f"financeiro_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(bio, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
 
 
 # ===================================================================
