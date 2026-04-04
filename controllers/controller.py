@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Optional, Any
+from io import BytesIO
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, or_
 from fastapi import HTTPException, status, UploadFile
@@ -12,6 +13,10 @@ from models import (
     PDVCategory, PDVPaymentMethod, PDVExpenseCategory, PDVExpense, PDVTerminalInvite
 )
 import schemas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
 
 Restaurant = None
 Product = None
@@ -1232,7 +1237,7 @@ def list_cash_registers(
     return query.order_by(desc(PDVCashRegister.opened_at)).all()
 
 # ===================================================================
-# Sales
+# Sales & Invoices
 # ===================================================================
 
 def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int, user_id: int):
@@ -3058,6 +3063,221 @@ def get_financial_summary(
         "expenses_count": len(expenses),
         "expense_breakdown": list(breakdown_map.values()),
     }
+
+# ===================================================================
+# Invoices (utilizam o mesmo modelo de venda, mas permitem status pendente)
+# ===================================================================
+
+def create_invoice(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int, user_id: int):
+    """
+    Cria uma fatura pendente (ou paga, se amount_paid >= total). Não exige caixa aberto;
+    se houver um caixa aberto para o usuário, ele é associado.
+    """
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+
+    register = get_current_register(db, terminal.id, user_id=user_id)
+    cash_register_id = register.id if register else None
+
+    items_to_add = []
+    subtotal = Decimal("0.00")
+
+    for item_data in sale_data.items:
+        product = db.query(PDVProduct).filter(
+            PDVProduct.id == item_data.product_id,
+            PDVProduct.terminal_id == terminal.id,
+            PDVProduct.is_active == True
+        ).first()
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Product {item_data.product_id} not found")
+        if not product.allow_decimal_quantity and item_data.quantity != item_data.quantity.to_integral_value():
+            raise HTTPException(status_code=400, detail=f"Product {product.name} does not allow decimal quantity")
+        if product.track_stock:
+            inventory = get_primary_inventory(db, product.id, terminal.id, create_if_missing=True)
+            available_quantity = inventory.quantity or Decimal("0.00")
+            if available_quantity < item_data.quantity:
+                raise HTTPException(status_code=400, detail=f"Insufficient stock for {product.name}. Available: {available_quantity}")
+
+        unit_price = item_data.unit_price if item_data.unit_price is not None else product.price
+        item_total_raw = unit_price * item_data.quantity
+        discount = item_data.discount_amount + (item_total_raw * (item_data.discount_percent / 100))
+        item_total = item_total_raw - discount
+
+        items_to_add.append({
+            "product": product,
+            "data": item_data,
+            "unit_price": unit_price,
+            "item_subtotal": item_total,
+            "discount": discount
+        })
+        subtotal += item_total
+
+    sale_discount = sale_data.discount_amount + (subtotal * (sale_data.discount_percent / 100))
+    total_with_discount = subtotal - sale_discount
+    TAX_RATE = Decimal("0.16")
+    subtotal_without_tax = total_with_discount / (Decimal("1.00") + TAX_RATE)
+    tax = total_with_discount - subtotal_without_tax
+    total = total_with_discount
+
+    effective_amount_paid = sale_data.amount_paid or Decimal("0.00")
+    payment_status = "paid" if effective_amount_paid >= total else "pending"
+    status = "completed" if payment_status == "paid" else "pending"
+
+    sale = PDVSale(
+        terminal_id=terminal.id,
+        cash_register_id=cash_register_id,
+        customer_id=sale_data.customer_id,
+        customer_name=sale_data.customer_name,
+        customer_phone=sale_data.customer_phone,
+        subtotal=subtotal_without_tax,
+        discount_amount=sale_discount,
+        discount_percent=sale_data.discount_percent,
+        tax_amount=tax,
+        total=total,
+        payment_method=sale_data.payment_method,
+        payment_status=payment_status,
+        amount_paid=effective_amount_paid,
+        change_amount=(effective_amount_paid - total) if effective_amount_paid > total else 0,
+        sale_type=sale_data.sale_type,
+        status=status,
+        delivery_address=sale_data.delivery_address,
+        delivery_notes=sale_data.delivery_notes,
+        notes=sale_data.notes,
+        created_by=user_id,
+        created_at=datetime.utcnow()
+    )
+    db.add(sale)
+    db.commit()
+    db.refresh(sale)
+
+    for item_obj in items_to_add:
+        product = item_obj["product"]
+        data = item_obj["data"]
+        sale_item = PDVSaleItem(
+            sale_id=sale.id,
+            product_id=product.id,
+            product_name=product.name,
+            product_sku=product.sku,
+            quantity=data.quantity,
+            unit_price=item_obj["unit_price"],
+            discount_amount=item_obj["discount"],
+            discount_percent=data.discount_percent,
+            subtotal=item_obj["item_subtotal"],
+            notes=data.notes
+        )
+        db.add(sale_item)
+        if product.track_stock:
+            inventory = get_primary_inventory(db, product.id, terminal.id, create_if_missing=True)
+            qty_before = inventory.quantity
+            qty_after = qty_before - data.quantity
+            if qty_after < 0:
+                raise HTTPException(status_code=400, detail=f"Insufficient stock for {product.name}")
+            inventory.quantity = qty_after
+            movement = PDVStockMovement(
+                product_id=product.id,
+                terminal_id=terminal.id,
+                movement_type=MovementType.SALE,
+                quantity=-data.quantity,
+                quantity_before=qty_before,
+                quantity_after=qty_after,
+                reference=f"Invoice #{sale.id}",
+                reference_id=sale.id,
+                created_by=user_id
+            )
+            db.add(movement)
+
+    db.commit()
+    db.refresh(sale)
+    return sale
+
+def mark_invoice_paid(db: Session, sale_id: int, terminal_id: int, user_id: int):
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    sale = db.query(PDVSale).filter(PDVSale.id == sale_id, PDVSale.terminal_id == terminal.id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if sale.status == "completed" and sale.payment_status == "paid":
+        return sale
+    register = get_current_register(db, terminal.id, user_id=user_id)
+    cash_register_id = register.id if register else sale.cash_register_id
+    sale.cash_register_id = cash_register_id
+    sale.payment_status = "paid"
+    sale.status = "completed"
+    sale.amount_paid = sale.total
+    sale.change_amount = 0
+    sale.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(sale)
+    return sale
+
+
+def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSaleItem]) -> bytes:
+    """Gera PDF de fatura (A4) com dados do terminal, cliente e itens."""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=48,
+        bottomMargin=36,
+    )
+    styles = getSampleStyleSheet()
+    elements: List[Any] = []
+
+    elements.append(Paragraph(f"<b>{terminal.name}</b>", styles["Title"]))
+    if terminal.address:
+        elements.append(Paragraph(str(terminal.address), styles["Normal"]))
+    if terminal.phone:
+        elements.append(Paragraph(f"Tel: {terminal.phone}", styles["Normal"]))
+    elements.append(Spacer(1, 12))
+
+    elements.append(Paragraph(f"Fatura Nº {sale.id}", styles["Heading2"]))
+    elements.append(Paragraph(f"Data: {sale.created_at.strftime('%d/%m/%Y %H:%M')}", styles["Normal"]))
+    status_label = "Pago" if sale.payment_status == "paid" else "Pendente"
+    elements.append(Paragraph(f"Estado: {status_label}", styles["Normal"]))
+    elements.append(Spacer(1, 12))
+
+    customer = sale.customer_name or "Consumidor Final"
+    customer_phone = sale.customer_phone or "-"
+    elements.append(Paragraph("<b>Cliente</b>", styles["Heading3"]))
+    elements.append(Paragraph(f"Nome: {customer}", styles["Normal"]))
+    elements.append(Paragraph(f"Telefone: {customer_phone}", styles["Normal"]))
+    elements.append(Spacer(1, 12))
+
+    table_data = [["Item", "Qtd", "Preço Unit.", "Desconto", "Total"]]
+    for item in items:
+        table_data.append([
+            item.product_name,
+            f"{item.quantity}",
+            f"{item.unit_price:.2f}",
+            f"{item.discount_amount:.2f}",
+            f"{item.subtotal:.2f}",
+        ])
+    table = Table(table_data, colWidths=[210, 60, 80, 80, 80])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    elements.append(table)
+    elements.append(Spacer(1, 12))
+
+    elements.append(Paragraph("<b>Resumo</b>", styles["Heading3"]))
+    elements.append(Paragraph(f"Subtotal (sem IVA): {sale.subtotal:.2f}", styles["Normal"]))
+    elements.append(Paragraph(f"IVA: {sale.tax_amount:.2f}", styles["Normal"]))
+    elements.append(Paragraph(f"Descontos: {sale.discount_amount:.2f}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>Total: {sale.total:.2f}</b>", styles["Normal"]))
+    elements.append(Paragraph(f"Pago: {sale.amount_paid:.2f}", styles["Normal"]))
+    elements.append(Paragraph(f"Troco: {sale.change_amount:.2f}", styles["Normal"]))
+
+    doc.build(elements)
+    pdf = buffer.getvalue()
+    buffer.close()
+    return pdf
 
 # ===================================================================
 # Image Upload

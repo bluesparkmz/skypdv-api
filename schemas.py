@@ -863,3 +863,70 @@ class FinancialSummary(BaseModel):
     expenses_count: int
     expense_breakdown: List[ExpenseCategoryBreakdown] = []
 
+
+# ==============================
+# FastFood minimal support
+# ==============================
+
+
+class FastFoodRestaurantBase(BaseModel):
+    name: str
+    category: Optional[str] = None
+    is_open: Optional[bool] = False
+    active: Optional[bool] = True
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+
+class FastFoodRestaurantCreate(FastFoodRestaurantBase):
+    pass
+
+
+class FastFoodRestaurant(FastFoodRestaurantBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RestaurantTableBase(BaseModel):
+    table_number: str
+    seats: int = 4
+    shape: str = "square"
+    width: int = 80
+    height: int = 80
+    position_x: int = 0
+    position_y: int = 0
+    status: str = "available"
+
+
+class RestaurantTableCreate(RestaurantTableBase):
+    pass
+
+
+class RestaurantTableUpdate(BaseModel):
+    table_number: Optional[str] = None
+    seats: Optional[int] = None
+    shape: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    position_x: Optional[int] = None
+    position_y: Optional[int] = None
+    status: Optional[str] = None
+
+
+class RestaurantTablePosition(BaseModel):
+    position_x: int
+    position_y: int
+
+
+class RestaurantTable(RestaurantTableBase):
+    id: int
+    restaurant_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+

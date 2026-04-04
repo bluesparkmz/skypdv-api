@@ -1,15 +1,16 @@
 from datetime import datetime
 
 import os
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from database import Base, engine, get_db
-from models import PDVProduct, User
+from models import PDVProduct, User, FastFoodRestaurant, RestaurantTable
 from routers.sky_pdv_router import router as sky_pdv_router
 from controllers import controller
+import schemas
 
 import models  # noqa: F401
 
@@ -118,6 +119,29 @@ def update_phone(
 app.include_router(sky_pdv_router)
 
 # FastFood compatibility routes without /skypdv prefix (frontend legacy)
+def _get_or_create_fastfood_restaurant(db: Session, current_user: User) -> FastFoodRestaurant:
+    restaurant = db.query(FastFoodRestaurant).filter(FastFoodRestaurant.user_id == current_user.id).first()
+    if restaurant:
+        return restaurant
+
+    terminal = controller.get_or_create_terminal(db, current_user.id, create_if_missing=True)
+    fallback_name = terminal.name if terminal else (current_user.name or "Restaurante")
+
+    restaurant = FastFoodRestaurant(
+        user_id=current_user.id,
+        name=fallback_name,
+        category="restaurant",
+        is_open=False,
+        active=True,
+        phone=terminal.phone if terminal else None,
+        address=terminal.address if terminal else None,
+    )
+    db.add(restaurant)
+    db.commit()
+    db.refresh(restaurant)
+    return restaurant
+
+
 @app.post("/fastfood/restaurants")
 async def create_fastfood_restaurant_root(
     request: Request,
@@ -126,16 +150,19 @@ async def create_fastfood_restaurant_root(
 ):
     data = await request.form()
     name = data.get("name") or "FastFood"
-    return {
-        "id": 1,
-        "user_id": current_user.id,
-        "name": name,
-        "category": data.get("category") or "restaurant",
-        "is_open": False,
-        "active": True,
-        "phone": data.get("phone"),
-        "address": data.get("address"),
-    }
+    restaurant = FastFoodRestaurant(
+        user_id=current_user.id,
+        name=name,
+        category=data.get("category") or "restaurant",
+        is_open=False,
+        active=True,
+        phone=data.get("phone"),
+        address=data.get("address"),
+    )
+    db.add(restaurant)
+    db.commit()
+    db.refresh(restaurant)
+    return restaurant
 
 
 @app.get("/fastfood/restaurants/mine")
@@ -143,6 +170,145 @@ def list_my_restaurants_root(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Reaproveita a mesma lógica de autocriação de terminal para forçar vínculo
-    controller.get_or_create_terminal(db, current_user.id, create_if_missing=True)
-    return []
+    restaurant = _get_or_create_fastfood_restaurant(db, current_user)
+    return [restaurant]
+
+
+@app.get("/fastfood/restaurants/{restaurant_id}/tables")
+def list_tables(
+    restaurant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    restaurant = db.query(FastFoodRestaurant).filter(
+        FastFoodRestaurant.id == restaurant_id,
+        FastFoodRestaurant.user_id == current_user.id,
+    ).first()
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    return (
+        db.query(RestaurantTable)
+        .filter(RestaurantTable.restaurant_id == restaurant.id)
+        .order_by(RestaurantTable.id)
+        .all()
+    )
+
+
+@app.post("/fastfood/restaurants/{restaurant_id}/tables", status_code=201)
+def create_table(
+    restaurant_id: int,
+    table: schemas.RestaurantTableCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    restaurant = db.query(FastFoodRestaurant).filter(
+        FastFoodRestaurant.id == restaurant_id,
+        FastFoodRestaurant.user_id == current_user.id,
+    ).first()
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    new_table = RestaurantTable(
+        restaurant_id=restaurant.id,
+        table_number=table.table_number,
+        seats=table.seats,
+        shape=table.shape,
+        width=table.width,
+        height=table.height,
+        position_x=table.position_x,
+        position_y=table.position_y,
+        status=table.status or "available",
+    )
+    db.add(new_table)
+    db.commit()
+    db.refresh(new_table)
+    return new_table
+
+
+@app.put("/fastfood/restaurants/{restaurant_id}/tables/{table_id}")
+def update_table(
+    restaurant_id: int,
+    table_id: int,
+    data: schemas.RestaurantTableUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    restaurant = db.query(FastFoodRestaurant).filter(
+        FastFoodRestaurant.id == restaurant_id,
+        FastFoodRestaurant.user_id == current_user.id,
+    ).first()
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    table = (
+        db.query(RestaurantTable)
+        .filter(RestaurantTable.restaurant_id == restaurant.id, RestaurantTable.id == table_id)
+        .first()
+    )
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(table, field, value)
+    db.add(table)
+    db.commit()
+    db.refresh(table)
+    return table
+
+
+@app.patch("/fastfood/restaurants/{restaurant_id}/tables/{table_id}/position")
+def update_table_position(
+    restaurant_id: int,
+    table_id: int,
+    data: schemas.RestaurantTablePosition,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    restaurant = db.query(FastFoodRestaurant).filter(
+        FastFoodRestaurant.id == restaurant_id,
+        FastFoodRestaurant.user_id == current_user.id,
+    ).first()
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    table = (
+        db.query(RestaurantTable)
+        .filter(RestaurantTable.restaurant_id == restaurant.id, RestaurantTable.id == table_id)
+        .first()
+    )
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    table.position_x = data.position_x
+    table.position_y = data.position_y
+    db.add(table)
+    db.commit()
+    db.refresh(table)
+    return table
+
+
+@app.delete("/fastfood/restaurants/{restaurant_id}/tables/{table_id}")
+def delete_table(
+    restaurant_id: int,
+    table_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    restaurant = db.query(FastFoodRestaurant).filter(
+        FastFoodRestaurant.id == restaurant_id,
+        FastFoodRestaurant.user_id == current_user.id,
+    ).first()
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    table = (
+        db.query(RestaurantTable)
+        .filter(RestaurantTable.restaurant_id == restaurant.id, RestaurantTable.id == table_id)
+        .first()
+    )
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    db.delete(table)
+    db.commit()
+    return {"message": "Table deleted"}

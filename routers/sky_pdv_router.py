@@ -8,7 +8,7 @@ import io
 
 from database import get_db
 from auth import get_current_user
-from models import User, PDVStockMovement, MovementType
+from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem
 import schemas
 from controllers import controller
 import openpyxl
@@ -464,6 +464,91 @@ def list_sales(
         sale_type=sale_type,
         status=status,
         user_id=filter_user_id
+    )
+
+# ===================================================================
+# Invoice Endpoints (usam o mesmo modelo de venda)
+# ===================================================================
+
+@router.post("/invoices", response_model=schemas.PDVSale)
+def create_invoice(
+    sale: schemas.PDVSaleCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
+    return controller.create_invoice(db, sale, terminal.id, current_user.id)
+
+@router.get("/invoices", response_model=List[schemas.PDVSale])
+def list_invoices(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    payment_status: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    if controller.is_terminal_admin(db, terminal.id, current_user.id):
+        filter_user_id = user_id
+    else:
+        filter_user_id = current_user.id
+    status = None  # retorna todas para ver pendentes e pagas
+    sales = controller.get_sales(
+        db, terminal.id,
+        skip=skip,
+        limit=limit,
+        start_date=start_date,
+        end_date=end_date,
+        status=status,
+        user_id=filter_user_id
+    )
+    if payment_status:
+        sales = [s for s in sales if getattr(s, "payment_status", None) == payment_status]
+    return sales
+
+@router.post("/invoices/{invoice_id}/pay", response_model=schemas.PDVSale)
+def pay_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
+    return controller.mark_invoice_paid(db, invoice_id, terminal.id, current_user.id)
+
+@router.get("/invoices/{invoice_id}/pdf")
+def get_invoice_pdf(
+    invoice_id: int,
+    phone: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    # Pode ver a própria venda ou, se admin, qualquer uma
+    sale = db.query(PDVSale).filter(
+        PDVSale.id == invoice_id,
+        PDVSale.terminal_id == terminal.id
+    ).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if not controller.is_terminal_admin(db, terminal.id, current_user.id) and sale.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    items = db.query(PDVSaleItem).filter(PDVSaleItem.sale_id == sale.id).all()
+    pdf_bytes = controller.generate_invoice_pdf(sale, terminal, items)
+    filename = f"fatura-{sale.id}.pdf"
+
+    if phone:
+        send_whatsapp_file(phone, filename, "application/pdf", pdf_bytes, caption="Fatura SkyPDV")
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'}
     )
 
 @router.get("/sales/{sale_id}", response_model=schemas.PDVSale)

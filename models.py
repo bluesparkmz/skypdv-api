@@ -386,3 +386,45 @@ class PDVExpense(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     category = relationship("PDVExpenseCategory")
+
+
+# ==============================
+# FastFood minimal support
+# ==============================
+
+
+class FastFoodRestaurant(Base):
+    __tablename__ = "fastfood_restaurants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    category = Column(String(100), nullable=True)
+    is_open = Column(Boolean, default=False)
+    active = Column(Boolean, default=True)
+    phone = Column(String(50), nullable=True)
+    address = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="fastfood_restaurants")
+    tables = relationship("RestaurantTable", back_populates="restaurant", cascade="all, delete-orphan")
+
+
+class RestaurantTable(Base):
+    __tablename__ = "fastfood_tables"
+
+    id = Column(Integer, primary_key=True, index=True)
+    restaurant_id = Column(Integer, ForeignKey("fastfood_restaurants.id", ondelete="CASCADE"), nullable=False)
+    table_number = Column(String(50), nullable=False)
+    seats = Column(Integer, default=4)
+    shape = Column(String(20), default="square")
+    width = Column(Integer, default=80)
+    height = Column(Integer, default=80)
+    position_x = Column(Integer, default=0)
+    position_y = Column(Integer, default=0)
+    status = Column(String(20), default="available")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    restaurant = relationship("FastFoodRestaurant", back_populates="tables")
