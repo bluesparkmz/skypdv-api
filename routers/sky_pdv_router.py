@@ -43,6 +43,15 @@ def setup_my_terminal(
     """Fazer setup do PDV (criar terminal manualmente para lojas/farmácias)"""
     return controller.create_terminal_for_user(db, current_user.id, terminal_data)
 
+@router.post("/terminal", response_model=schemas.PDVTerminal)
+def create_my_terminal(
+    terminal_data: schemas.PDVTerminalCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Alias compatível para criação de terminal (POST /terminal)."""
+    return controller.create_terminal_for_user(db, current_user.id, terminal_data)
+
 @router.put("/terminal", response_model=schemas.PDVTerminal)
 def update_my_terminal(
     terminal_update: schemas.PDVTerminalUpdate,
@@ -1244,8 +1253,16 @@ def delete_payment_method(
     return controller.delete_payment_method(db, method_id, terminal.id)
 
 # ===================================================================
-# Finance Endpoints
+# Finance Endpoints (apenas admin do terminal: dono ou role ADMIN)
 # ===================================================================
+
+def _require_terminal_finance_admin(db: Session, terminal, current_user_id: int) -> None:
+    if not controller.is_terminal_admin(db, terminal.id, current_user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores do terminal podem aceder às finanças.",
+        )
+
 
 @router.get("/finance/expense-categories", response_model=List[schemas.PDVExpenseCategory])
 def list_expense_categories(
@@ -1253,6 +1270,7 @@ def list_expense_categories(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     return controller.get_expense_categories_list(db, terminal.id)
 
 
@@ -1264,6 +1282,7 @@ def create_expense_category(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     return controller.create_expense_category(db, category, terminal.id, current_user.id, is_global)
 
 
@@ -1275,6 +1294,7 @@ def update_expense_category(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     return controller.update_expense_category(db, category_id, updates, terminal.id)
 
 
@@ -1285,6 +1305,7 @@ def delete_expense_category(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     return controller.delete_expense_category(db, category_id, terminal.id)
 
 
@@ -1299,6 +1320,7 @@ def list_expenses(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     return controller.get_expenses(db, terminal.id, start_date, end_date, category_id, skip, limit)
 
 
@@ -1309,6 +1331,7 @@ def create_expense(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     return controller.create_expense(db, expense, terminal.id, current_user.id)
 
 
@@ -1320,6 +1343,7 @@ def update_expense(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     return controller.update_expense(db, expense_id, updates, terminal.id)
 
 
@@ -1330,6 +1354,7 @@ def delete_expense(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     return controller.delete_expense(db, expense_id, terminal.id)
 
 
@@ -1342,11 +1367,12 @@ def get_finance_summary(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     if not start_date:
         start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if not end_date:
         end_date = datetime.utcnow()
-    filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
+    filter_user_id = user_id
     return controller.get_financial_summary(db, terminal.id, start_date, end_date, filter_user_id)
 
 @router.get("/finance/summary.pdf")
@@ -1359,11 +1385,12 @@ def get_finance_summary_pdf(
     current_user: User = Depends(get_current_user),
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     if not start_date:
         start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if not end_date:
         end_date = datetime.utcnow()
-    filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
+    filter_user_id = user_id
 
     summary = controller.get_financial_summary(db, terminal.id, start_date, end_date, filter_user_id)
 
@@ -1468,11 +1495,12 @@ def get_finance_summary_excel(
     current_user: User = Depends(get_current_user),
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
     if not start_date:
         start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if not end_date:
         end_date = datetime.utcnow()
-    filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
+    filter_user_id = user_id
 
     summary = controller.get_financial_summary(db, terminal.id, start_date, end_date, filter_user_id)
     wb = openpyxl.Workbook()
