@@ -17,6 +17,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
+from whatsapp_service import send_whatsapp_file, send_whatsapp_text
 
 Restaurant = None
 Product = None
@@ -25,6 +26,7 @@ FastFoodOrder = None
 FastFoodOrderItem = None
 
 PRIMARY_STOCK_LOCATION = "balcao"
+CASH_REGISTER_MAX_DURATION = timedelta(hours=24)
 
 # ===================================================================
 # Terminals
@@ -1144,15 +1146,258 @@ def transfer_stock(db: Session, transfer: schemas.StockTransfer, terminal_id: in
 # Cash Register
 # ===================================================================
 
+def _calculate_register_expected(register: PDVCashRegister) -> Decimal:
+    return (
+        Decimal(str(register.opening_amount or 0)) +
+        Decimal(str(register.total_cash or 0)) +
+        Decimal(str(register.total_skywallet or 0)) +
+        Decimal(str(register.total_card or 0)) +
+        Decimal(str(register.total_mpesa or 0))
+    )
+
+
+def _merge_register_notes(existing_notes: Optional[str], closing_notes: Optional[str]) -> Optional[str]:
+    existing = (existing_notes or "").strip()
+    closing = (closing_notes or "").strip()
+    if existing and closing:
+        return f"{existing} | {closing}"
+    return existing or closing or None
+
+
+def _get_terminal_admin_phone_numbers(db: Session, terminal_id: int) -> List[str]:
+    terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
+    if not terminal:
+        return []
+
+    numbers: List[str] = []
+    seen = set()
+
+    def _add(number: Optional[str]):
+        clean = (number or "").strip()
+        if not clean or clean in seen:
+            return
+        seen.add(clean)
+        numbers.append(clean)
+
+    if terminal.user and terminal.user.phone:
+        _add(terminal.user.phone)
+
+    admin_members = (
+        db.query(User.phone)
+        .join(PDVTerminalUser, PDVTerminalUser.user_id == User.id)
+        .filter(
+            PDVTerminalUser.terminal_id == terminal_id,
+            PDVTerminalUser.is_active == True,
+            PDVTerminalUser.role == PDVTerminalRole.ADMIN,
+        )
+        .all()
+    )
+    for phone, in admin_members:
+        _add(phone)
+
+    if not numbers and terminal.phone:
+        _add(terminal.phone)
+
+    return numbers
+
+
+def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) -> bytes:
+    terminal = db.query(PDVTerminal).filter(PDVTerminal.id == register.terminal_id).first()
+    operator = db.query(User).filter(User.id == register.user_id).first()
+    sales = (
+        db.query(PDVSale)
+        .filter(PDVSale.cash_register_id == register.id)
+        .order_by(PDVSale.created_at.asc())
+        .all()
+    )
+
+    currency = terminal.currency if terminal and terminal.currency else "MT"
+    expected_amount = Decimal(str(register.expected_amount or _calculate_register_expected(register)))
+    closing_amount = Decimal(str(register.closing_amount or expected_amount))
+    difference = Decimal(str(register.difference or (closing_amount - expected_amount)))
+    closed_at = register.closed_at or datetime.utcnow()
+
+    def _fmt_money(value: Any) -> str:
+        try:
+            return f"{float(value):,.2f} {currency}"
+        except Exception:
+            return f"0.00 {currency}"
+
+    def _fmt_dt(value: Optional[datetime]) -> str:
+        return value.strftime("%d/%m/%Y %H:%M") if value else "-"
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    story = []
+
+    story.append(Paragraph((terminal.name if terminal else "SkyPDV"), styles["Title"]))
+    story.append(Paragraph("Relatorio de Fechamento de Caixa", styles["Heading2"]))
+    story.append(Spacer(1, 10))
+
+    info_rows = [
+        ["Caixa", f"#{register.id}"],
+        ["Operador", (operator.name or operator.username or operator.email) if operator else f"Usuario #{register.user_id}"],
+        ["Abertura", _fmt_dt(register.opened_at)],
+        ["Fechamento", _fmt_dt(closed_at)],
+        ["Duracao", str(closed_at - register.opened_at).split(".")[0] if register.opened_at else "-"],
+        ["Status final", register.status],
+    ]
+    info_table = Table(info_rows, colWidths=[130, 380])
+    info_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F7F7F7")),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.append(info_table)
+    story.append(Spacer(1, 12))
+
+    summary_rows = [
+        ["Metrica", "Valor"],
+        ["Valor de abertura", _fmt_money(register.opening_amount)],
+        ["Vendas em dinheiro", _fmt_money(register.total_cash)],
+        ["Vendas em cartao", _fmt_money(register.total_card)],
+        ["Vendas em SkyWallet", _fmt_money(register.total_skywallet)],
+        ["Vendas em M-Pesa", _fmt_money(register.total_mpesa)],
+        ["Total de vendas", _fmt_money(register.total_sales)],
+        ["Valor esperado", _fmt_money(expected_amount)],
+        ["Valor informado no fechamento", _fmt_money(closing_amount)],
+        ["Diferenca", _fmt_money(difference)],
+        ["Quantidade de vendas", str(register.sales_count or 0)],
+        ["Estornos", f"{register.refunds_count or 0} ({_fmt_money(register.total_refunds or 0)})"],
+    ]
+    summary_table = Table(summary_rows, colWidths=[210, 300])
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(summary_table)
+    story.append(Spacer(1, 12))
+
+    sales_rows = [["Venda", "Hora", "Pagamento", "Status", "Total"]]
+    for sale in sales[:25]:
+        sales_rows.append(
+            [
+                f"#{sale.id}",
+                _fmt_dt(sale.created_at),
+                str(sale.payment_method or "-"),
+                str(sale.status or "-"),
+                _fmt_money(sale.total or 0),
+            ]
+        )
+    if len(sales_rows) == 1:
+        sales_rows.append(["-", "-", "-", "-", _fmt_money(0)])
+
+    sales_table = Table(sales_rows, colWidths=[55, 120, 110, 95, 130])
+    sales_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (4, 1), (4, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(Paragraph("Resumo das vendas do caixa", styles["Heading3"]))
+    story.append(sales_table)
+
+    if register.notes:
+        story.append(Spacer(1, 12))
+        story.append(Paragraph("Observacoes", styles["Heading3"]))
+        story.append(Paragraph(register.notes.replace("\n", "<br/>"), styles["Normal"]))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def _notify_cash_register_closed(db: Session, register: PDVCashRegister, auto_closed: bool = False) -> None:
+    phones = _get_terminal_admin_phone_numbers(db, register.terminal_id)
+    if not phones:
+        return
+
+    pdf_bytes = generate_cash_register_report_pdf(db, register)
+    closed_at = register.closed_at or datetime.utcnow()
+    filename = f"fechamento_caixa_{register.id}_{closed_at.strftime('%Y%m%d_%H%M')}.pdf"
+    closing_mode = "automatico" if auto_closed else "manual"
+    caption = f"Fechamento {closing_mode} do caixa #{register.id} em {closed_at.strftime('%d/%m/%Y %H:%M')}."
+
+    for phone in phones:
+        send_whatsapp_file(phone, filename, "application/pdf", pdf_bytes, caption=caption)
+        send_whatsapp_text(phone, caption)
+
+
+def _finalize_register_close(
+    db: Session,
+    register: PDVCashRegister,
+    closing_amount: Optional[Decimal],
+    notes: Optional[str] = None,
+    auto_closed: bool = False,
+) -> PDVCashRegister:
+    expected = _calculate_register_expected(register)
+    final_closing_amount = expected if closing_amount is None else Decimal(str(closing_amount))
+    close_note = (notes or "").strip()
+    if auto_closed:
+        close_note = f"{close_note} | Closing notes: Auto-closed after 24 hours.".strip(" |") if close_note else "Closing notes: Auto-closed after 24 hours."
+    elif close_note:
+        close_note = f"Closing notes: {close_note}"
+
+    register.closing_amount = final_closing_amount
+    register.expected_amount = expected
+    register.difference = final_closing_amount - expected
+    register.notes = _merge_register_notes(register.notes, close_note)
+    register.status = "closed"
+    register.closed_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(register)
+    _notify_cash_register_closed(db, register, auto_closed=auto_closed)
+    return register
+
+
+def close_expired_registers(db: Session, terminal_id: Optional[int] = None, user_id: Optional[int] = None) -> int:
+    cutoff = datetime.utcnow() - CASH_REGISTER_MAX_DURATION
+    query = db.query(PDVCashRegister).filter(
+        PDVCashRegister.status == "open",
+        PDVCashRegister.opened_at <= cutoff,
+    )
+    if terminal_id is not None:
+        query = query.filter(PDVCashRegister.terminal_id == terminal_id)
+    if user_id is not None:
+        query = query.filter(PDVCashRegister.user_id == user_id)
+
+    expired_registers = query.order_by(PDVCashRegister.opened_at.asc()).all()
+    closed_count = 0
+    for register in expired_registers:
+        _finalize_register_close(db, register, closing_amount=None, auto_closed=True)
+        closed_count += 1
+    return closed_count
+
 def get_current_register(db: Session, terminal_id: int, user_id: Optional[int] = None):
     """Obter caixa aberto atualmente."""
+    close_expired_registers(db, terminal_id=terminal_id, user_id=user_id)
     query = db.query(PDVCashRegister).filter(
         PDVCashRegister.terminal_id == terminal_id,
         PDVCashRegister.status == "open"
     )
     if user_id is not None:
         query = query.filter(PDVCashRegister.user_id == user_id)
-    return query.order_by(desc(PDVCashRegister.opened_at)).first()
+    register = query.order_by(desc(PDVCashRegister.opened_at)).first()
+    if register:
+        register.expected_amount = _calculate_register_expected(register)
+    return register
 
 def open_register(db: Session, data: schemas.PDVCashRegisterOpen, terminal_id: int, user_id: int):
     # Verificar se o usuário já tem caixa aberto (não bloqueia outros usuários)
@@ -1219,6 +1464,19 @@ def list_cash_registers(
     if user_id:
         query = query.filter(PDVCashRegister.user_id == user_id)
     return query.order_by(desc(PDVCashRegister.opened_at)).all()
+
+
+def close_register(db: Session, data: schemas.PDVCashRegisterClose, terminal_id: int, user_id: int):
+    register = get_current_register(db, terminal_id, user_id=user_id)
+    if not register and is_terminal_admin(db, terminal_id, user_id):
+        register = get_current_register(db, terminal_id)
+    if not register:
+        raise HTTPException(status_code=404, detail="No open cash register found")
+
+    if register.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Only the operator who opened the cash register can close it")
+
+    return _finalize_register_close(db, register, data.closing_amount, data.notes, auto_closed=False)
 
 def list_cash_registers(
     db: Session,

@@ -1,4 +1,6 @@
 from datetime import datetime
+import threading
+import time
 
 import os
 from fastapi import Depends, FastAPI, Request, HTTPException
@@ -6,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
-from database import Base, engine, get_db
+from database import Base, engine, get_db, SessionLocal
 from models import PDVProduct, User, FastFoodRestaurant, RestaurantTable
 from routers.sky_pdv_router import router as sky_pdv_router
 from controllers import controller
@@ -38,6 +40,20 @@ app = FastAPI(
     description="Backend independente do SkyPDV com autenticacao via BlueSpark Accounts.",
 )
 
+_cash_register_worker_started = False
+
+
+def _cash_register_expiry_worker():
+    while True:
+        db = SessionLocal()
+        try:
+            controller.close_expired_registers(db)
+        except Exception as exc:
+            print(f"Cash register expiry worker error: {exc}")
+        finally:
+            db.close()
+        time.sleep(60)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https?://.*",
@@ -47,6 +63,16 @@ app.add_middleware(
     allow_headers=["*"],
     max_age=86400,
 )
+
+
+@app.on_event("startup")
+def start_cash_register_expiry_worker():
+    global _cash_register_worker_started
+    if _cash_register_worker_started:
+        return
+    worker = threading.Thread(target=_cash_register_expiry_worker, name="cash-register-expiry-worker", daemon=True)
+    worker.start()
+    _cash_register_worker_started = True
 
 
 @app.get("/health")
