@@ -2787,8 +2787,14 @@ def cancel_fastfood_sale_internal(db: Session, order_id: int):
                 register.refunds_count += 1
                 register.total_refunds += sale.total
                 
-                if sale.payment_method == PaymentMethod.SKYWALLET:
+                if sale.payment_method == PaymentMethod.CASH:
+                    register.total_cash -= sale.total
+                elif sale.payment_method == PaymentMethod.CARD:
+                    register.total_card -= sale.total
+                elif sale.payment_method == PaymentMethod.SKYWALLET:
                     register.total_skywallet -= sale.total
+                elif sale.payment_method == PaymentMethod.MPESA:
+                    register.total_mpesa -= sale.total
         
         db.commit()
         return True
