@@ -167,6 +167,7 @@ class PDVProduct(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=False)
+    shared_source_product_id = Column(Integer, ForeignKey("pdv_products.id", ondelete="SET NULL"), nullable=True)
     supplier_id = Column(Integer, ForeignKey("pdv_suppliers.id", ondelete="SET NULL"), nullable=True)
     source_type = Column(Enum(SourceType), nullable=False, default=SourceType.LOCAL)
     external_product_id = Column(Integer, nullable=True)
@@ -188,6 +189,7 @@ class PDVProduct(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     terminal = relationship("PDVTerminal", back_populates="products")
+    shared_source_product = relationship("PDVProduct", remote_side=[id], backref="adopted_products")
     supplier = relationship("PDVSupplier", back_populates="products")
     inventory = relationship("PDVInventory", back_populates="product", uselist=False, cascade="all, delete-orphan")
     stock_movements = relationship("PDVStockMovement", back_populates="product", cascade="all, delete-orphan")

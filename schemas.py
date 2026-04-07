@@ -334,6 +334,7 @@ class PDVProduct(PDVProductBase):
     """Schema for PDV Product response"""
     id: int
     terminal_id: int
+    shared_source_product_id: Optional[int] = None
     supplier_id: Optional[int] = None
     source_type: SourceTypeEnum
     external_product_id: Optional[int] = None
@@ -355,6 +356,21 @@ class PDVProductSearch(BaseModel):
     is_fastfood: Optional[bool] = None
     skip: int = 0
     limit: int = 50
+
+
+class PDVSharedProductSearch(BaseModel):
+    query: Optional[str] = None
+    category: Optional[str] = None
+    business_type: Optional[str] = None  # loja | restaurante
+    skip: int = 0
+    limit: int = 50
+
+
+class PDVProductAdopt(BaseModel):
+    source_product_id: int
+    price: Optional[Decimal] = None
+    cost_price: Optional[Decimal] = None
+    initial_stock: Optional[Decimal] = None
 
 
 class PDVProductBatchFastFood(BaseModel):

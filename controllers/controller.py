@@ -834,7 +834,121 @@ def get_product_stats(db: Session, terminal_id: int):
         categories_count=categories_count
     )
 
+
+def _normalize_product_name(name: str) -> str:
+    return " ".join((name or "").strip().lower().split())
+
+
+def _ensure_unique_product_name(db: Session, terminal_id: int, name: str, exclude_product_id: Optional[int] = None):
+    normalized_name = _normalize_product_name(name)
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Product name is required")
+
+    products = db.query(PDVProduct).filter(
+        PDVProduct.terminal_id == terminal_id,
+        PDVProduct.is_active == True,
+    ).all()
+
+    for product in products:
+        if exclude_product_id and product.id == exclude_product_id:
+            continue
+        if _normalize_product_name(product.name) == normalized_name:
+            raise HTTPException(status_code=400, detail="A product with this name already exists in your account")
+
+
+def get_shared_products(
+    db: Session,
+    terminal_id: int,
+    search: str = None,
+    category: str = None,
+    business_type: str = None,
+    limit: int = 100,
+    skip: int = 0,
+):
+    query = db.query(PDVProduct).filter(
+        PDVProduct.is_active == True,
+        PDVProduct.terminal_id != terminal_id,
+    )
+
+    if search:
+        query = query.filter(or_(
+            PDVProduct.name.ilike(f"%{search}%"),
+            PDVProduct.sku.ilike(f"%{search}%"),
+            PDVProduct.barcode.ilike(f"%{search}%")
+        ))
+
+    if category:
+        query = query.filter(PDVProduct.category == category)
+
+    if business_type == "restaurante":
+        query = query.filter(PDVProduct.is_fastfood == True)
+    elif business_type == "loja":
+        query = query.filter(PDVProduct.is_fastfood == False)
+
+    return query.order_by(PDVProduct.name.asc()).offset(skip).limit(limit).all()
+
+
+def adopt_shared_product(
+    db: Session,
+    terminal_id: int,
+    source_product_id: int,
+    price: Optional[Decimal] = None,
+    cost_price: Optional[Decimal] = None,
+    initial_stock: Optional[Decimal] = None,
+):
+    source_product = db.query(PDVProduct).filter(
+        PDVProduct.id == source_product_id,
+        PDVProduct.is_active == True,
+    ).first()
+    if not source_product:
+        raise HTTPException(status_code=404, detail="Source product not found")
+
+    if source_product.terminal_id == terminal_id:
+        raise HTTPException(status_code=400, detail="This product already belongs to your account")
+
+    _ensure_unique_product_name(db, terminal_id, source_product.name)
+
+    db_product = PDVProduct(
+        terminal_id=terminal_id,
+        shared_source_product_id=source_product.id,
+        supplier_id=None,
+        source_type=SourceType.LOCAL,
+        external_product_id=None,
+        name=source_product.name,
+        sku=source_product.sku,
+        barcode=source_product.barcode,
+        description=source_product.description,
+        category=source_product.category,
+        cost_price=cost_price if cost_price is not None else source_product.cost_price,
+        price=price if price is not None else source_product.price,
+        promotional_price=source_product.promotional_price,
+        image=source_product.image,
+        emoji=source_product.emoji,
+        is_fastfood=source_product.is_fastfood,
+        track_stock=source_product.track_stock,
+        allow_decimal_quantity=source_product.allow_decimal_quantity,
+    )
+    db.add(db_product)
+    db.commit()
+    db.refresh(db_product)
+
+    qty = initial_stock if initial_stock is not None else Decimal("0.00")
+    inventory = PDVInventory(
+        product_id=db_product.id,
+        terminal_id=terminal_id,
+        quantity=qty,
+        min_quantity=Decimal("0.00"),
+        max_quantity=None,
+        reserved_quantity=Decimal("0.00"),
+        storage_location=PRIMARY_STOCK_LOCATION,
+    )
+    db.add(inventory)
+    db.commit()
+    db.refresh(db_product)
+    return db_product
+
 def create_product(db: Session, product: schemas.PDVProductCreate, terminal_id: int):
+    _ensure_unique_product_name(db, terminal_id, product.name)
     # Verificar se supplier existe e pertence ao terminal
     supplier = None
     if product.supplier_id:
@@ -853,6 +967,7 @@ def create_product(db: Session, product: schemas.PDVProductCreate, terminal_id: 
     # Criar produto
     db_product = PDVProduct(
         terminal_id=terminal_id,
+        shared_source_product_id=None,
         supplier_id=product.supplier_id,
         name=product.name,
         sku=product.sku,
@@ -911,6 +1026,9 @@ def update_product(db: Session, product_id: int, updates: schemas.PDVProductUpda
     product = db.query(PDVProduct).filter(PDVProduct.id == product_id, PDVProduct.terminal_id == terminal_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
+
+    if updates.name is not None:
+        _ensure_unique_product_name(db, terminal_id, updates.name, exclude_product_id=product_id)
 
     update_data = updates.dict(exclude_unset=True)
     supplier_id = update_data.pop("supplier_id", None) if "supplier_id" in update_data else None

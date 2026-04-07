@@ -230,6 +230,46 @@ def create_product(
     controller.require_terminal_permission(db, terminal.id, current_user.id, "can_manage_products")
     return controller.create_product(db, product, terminal.id)
 
+
+@router.get("/products/catalog", response_model=List[schemas.PDVProduct])
+def list_shared_products(
+    search: Optional[str] = None,
+    category: Optional[str] = None,
+    business_type: Optional[str] = Query(None, pattern="^(loja|restaurante)$"),
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.get_shared_products(
+        db,
+        terminal.id,
+        search=search,
+        category=category,
+        business_type=business_type,
+        limit=limit,
+        skip=skip,
+    )
+
+
+@router.post("/products/adopt", response_model=schemas.PDVProduct)
+def adopt_shared_product(
+    payload: schemas.PDVProductAdopt,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_manage_products")
+    return controller.adopt_shared_product(
+        db,
+        terminal.id,
+        payload.source_product_id,
+        price=payload.price,
+        cost_price=payload.cost_price,
+        initial_stock=payload.initial_stock,
+    )
+
 @router.post("/products/upload-image")
 async def upload_product_image(
     file: UploadFile = File(...),
