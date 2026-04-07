@@ -374,10 +374,7 @@ def get_current_register(
 ):
     """Obter sessão do caixa atual"""
     terminal = controller.get_terminal_required(db, current_user.id)
-    register = controller.get_current_register(db, terminal.id, current_user.id)
-    if register or not controller.is_terminal_admin(db, terminal.id, current_user.id):
-        return register
-    return controller.get_current_register(db, terminal.id)
+    return controller.get_current_register(db, terminal.id, current_user.id)
 
 @router.post("/cash-register/open", response_model=schemas.PDVCashRegister)
 def open_register(

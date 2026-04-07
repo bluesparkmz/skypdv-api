@@ -1468,8 +1468,6 @@ def list_cash_registers(
 
 def close_register(db: Session, data: schemas.PDVCashRegisterClose, terminal_id: int, user_id: int):
     register = get_current_register(db, terminal_id, user_id=user_id)
-    if not register and is_terminal_admin(db, terminal_id, user_id):
-        register = get_current_register(db, terminal_id)
     if not register:
         raise HTTPException(status_code=404, detail="No open cash register found")
 
@@ -1501,8 +1499,6 @@ def list_cash_registers(
 def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int, user_id: int):
     # 1. Verificar caixa e terminal
     register = get_current_register(db, terminal_id, user_id=user_id)
-    if not register and is_terminal_admin(db, terminal_id, user_id):
-        register = get_current_register(db, terminal_id)
     if not register:
         raise HTTPException(status_code=400, detail="Cash register is closed. Please open register first.")
     if register.user_id != user_id:
@@ -1804,8 +1800,8 @@ def get_dashboard_stats(db: Session, terminal_id: int, user_id: Optional[int] = 
         PDVInventory.quantity <= 0
     ).scalar() or 0
     
-    # Caixa atual (sempre mostra para todos)
-    current_register = get_current_register(db, terminal_id)
+    # Caixa atual do proprio utilizador
+    current_register = get_current_register(db, terminal_id, user_id=user_id)
     
     # Top Products (filtrado por usuário se não for admin)
     top_products_query = db.query(
