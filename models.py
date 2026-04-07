@@ -388,6 +388,23 @@ class PDVExpense(Base):
     category = relationship("PDVExpenseCategory")
 
 
+class PDVTaxRecord(Base):
+    __tablename__ = "pdv_tax_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=False)
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)
+    is_paid = Column(Boolean, default=False, nullable=False)
+    paid_at = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
+    updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("terminal_id", "year", "month", name="uq_pdv_tax_terminal_month"),)
+
+
 # ==============================
 # FastFood minimal support
 # ==============================

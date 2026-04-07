@@ -10,7 +10,7 @@ from models import (
     User, PDVTerminal, PDVTerminalUser, PDVTerminalRole, PDVSupplier, PDVProduct, PDVInventory,
     PDVStockMovement, PDVCashRegister, PDVSale, PDVSaleItem,
     SourceType, MovementType, PaymentMethod, SaleType,
-    PDVCategory, PDVPaymentMethod, PDVExpenseCategory, PDVExpense, PDVTerminalInvite
+    PDVCategory, PDVPaymentMethod, PDVExpenseCategory, PDVExpense, PDVTerminalInvite, PDVTaxRecord
 )
 import schemas
 from reportlab.lib.pagesizes import A4
@@ -3322,6 +3322,104 @@ def get_financial_summary(
         "expenses_count": len(expenses),
         "expense_breakdown": list(breakdown_map.values()),
     }
+
+
+def _get_or_create_tax_record(db: Session, terminal_id: int, year: int, month: int, user_id: Optional[int] = None):
+    record = db.query(PDVTaxRecord).filter(
+        PDVTaxRecord.terminal_id == terminal_id,
+        PDVTaxRecord.year == year,
+        PDVTaxRecord.month == month,
+    ).first()
+
+    if record:
+        return record
+
+    record = PDVTaxRecord(
+        terminal_id=terminal_id,
+        year=year,
+        month=month,
+        is_paid=False,
+        updated_by=user_id,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def ensure_monthly_tax_records(db: Session, reference_date: Optional[datetime] = None):
+    base_date = reference_date or datetime.utcnow()
+    first_day_current_month = datetime(base_date.year, base_date.month, 1)
+    previous_month_anchor = first_day_current_month - timedelta(days=1)
+    target_periods = {
+        (first_day_current_month.year, first_day_current_month.month),
+        (previous_month_anchor.year, previous_month_anchor.month),
+    }
+
+    terminal_ids = [terminal_id for (terminal_id,) in db.query(PDVTerminal.id).all()]
+    created_any = False
+
+    for terminal_id in terminal_ids:
+        for year, month in target_periods:
+            record = db.query(PDVTaxRecord).filter(
+                PDVTaxRecord.terminal_id == terminal_id,
+                PDVTaxRecord.year == year,
+                PDVTaxRecord.month == month,
+            ).first()
+            if record:
+                continue
+
+            db.add(PDVTaxRecord(
+                terminal_id=terminal_id,
+                year=year,
+                month=month,
+                is_paid=False,
+            ))
+            created_any = True
+
+    if created_any:
+        db.commit()
+
+
+def get_tax_summary(db: Session, terminal_id: int, year: int, month: int):
+    start_date = datetime(year, month, 1)
+    if month == 12:
+        end_date = datetime(year + 1, 1, 1) - timedelta(microseconds=1)
+    else:
+        end_date = datetime(year, month + 1, 1) - timedelta(microseconds=1)
+
+    sales = db.query(PDVSale).filter(
+        PDVSale.terminal_id == terminal_id,
+        PDVSale.status == "completed",
+        PDVSale.created_at >= start_date,
+        PDVSale.created_at <= end_date,
+    ).all()
+
+    total_tax_due = sum((Decimal(str(sale.tax_amount or 0)) for sale in sales), Decimal("0.00"))
+
+    record = _get_or_create_tax_record(db, terminal_id, year, month)
+
+    return {
+        "year": year,
+        "month": month,
+        "total_tax_due": total_tax_due,
+        "is_paid": bool(record.is_paid) if record else False,
+        "paid_at": record.paid_at if record else None,
+        "notes": record.notes if record else None,
+    }
+
+
+def update_tax_summary(db: Session, terminal_id: int, year: int, month: int, user_id: int, payload: schemas.PDVTaxSummaryUpdate):
+    record = _get_or_create_tax_record(db, terminal_id, year, month, user_id)
+
+    record.is_paid = payload.is_paid
+    record.notes = payload.notes
+    record.updated_by = user_id
+    record.paid_at = datetime.utcnow() if payload.is_paid else None
+
+    db.commit()
+    db.refresh(record)
+    return get_tax_summary(db, terminal_id, year, month)
 
 # ===================================================================
 # Invoices (utilizam o mesmo modelo de venda, mas permitem status pendente)

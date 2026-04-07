@@ -48,6 +48,7 @@ def _cash_register_expiry_worker():
         db = SessionLocal()
         try:
             controller.close_expired_registers(db)
+            controller.ensure_monthly_tax_records(db)
         except Exception as exc:
             print(f"Cash register expiry worker error: {exc}")
         finally:
@@ -70,6 +71,13 @@ def start_cash_register_expiry_worker():
     global _cash_register_worker_started
     if _cash_register_worker_started:
         return
+    db = SessionLocal()
+    try:
+        controller.ensure_monthly_tax_records(db)
+    except Exception as exc:
+        print(f"Initial monthly tax sync error: {exc}")
+    finally:
+        db.close()
     worker = threading.Thread(target=_cash_register_expiry_worker, name="cash-register-expiry-worker", daemon=True)
     worker.start()
     _cash_register_worker_started = True

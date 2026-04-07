@@ -1372,6 +1372,31 @@ def get_finance_summary(
     filter_user_id = user_id
     return controller.get_financial_summary(db, terminal.id, start_date, end_date, filter_user_id)
 
+
+@router.get("/finance/tax-summary", response_model=schemas.PDVTaxSummary)
+def get_finance_tax_summary(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
+    return controller.get_tax_summary(db, terminal.id, year, month)
+
+
+@router.put("/finance/tax-summary", response_model=schemas.PDVTaxSummary)
+def update_finance_tax_summary(
+    year: int,
+    month: int,
+    payload: schemas.PDVTaxSummaryUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    _require_terminal_finance_admin(db, terminal, current_user.id)
+    return controller.update_tax_summary(db, terminal.id, year, month, current_user.id, payload)
+
 @router.get("/finance/summary.pdf")
 def get_finance_summary_pdf(
     start_date: Optional[datetime] = None,

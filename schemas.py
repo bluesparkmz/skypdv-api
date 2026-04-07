@@ -864,6 +864,20 @@ class FinancialSummary(BaseModel):
     expense_breakdown: List[ExpenseCategoryBreakdown] = []
 
 
+class PDVTaxSummary(BaseModel):
+    year: int
+    month: int
+    total_tax_due: Decimal
+    is_paid: bool = False
+    paid_at: Optional[datetime] = None
+    notes: Optional[str] = None
+
+
+class PDVTaxSummaryUpdate(BaseModel):
+    is_paid: bool
+    notes: Optional[str] = None
+
+
 # ==============================
 # FastFood minimal support
 # ==============================
