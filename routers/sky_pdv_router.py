@@ -849,17 +849,17 @@ def get_sales_report_pdf(
     story.append(stock_table)
 
     doc.build(story)
-    buffer.seek(0)
+    pdf_bytes = buffer.getvalue()
 
     filename = f"Relatorio_Vendas_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.pdf"
     headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
 
     if phone:
         caption = f"Relatório de vendas {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} (SkyPDV)."
-        send_whatsapp_file(phone, filename, "application/pdf", buffer.getvalue(), caption=caption)
+        send_whatsapp_file(phone, filename, "application/pdf", pdf_bytes, caption=caption)
         send_whatsapp_text(phone, caption)
 
-    return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
 
 
 @router.get("/reports/sales-summary.xlsx")
@@ -1036,7 +1036,7 @@ def get_products_report_pdf(
     story.append(products_table)
 
     doc.build(story)
-    buffer.seek(0)
+    pdf_bytes = buffer.getvalue()
 
     filename = f"products_{_fmt_date(issued_at)}.pdf"
     headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
@@ -1479,10 +1479,10 @@ def get_finance_summary_pdf(
 
     if phone:
         caption = f"Resumo financeiro {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} (SkyPDV)."
-        send_whatsapp_file(phone, filename, "application/pdf", buffer.getvalue(), caption=caption)
+        send_whatsapp_file(phone, filename, "application/pdf", pdf_bytes, caption=caption)
         send_whatsapp_text(phone, caption)
 
-    return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
 
 
 @router.get("/finance/summary.xlsx")
