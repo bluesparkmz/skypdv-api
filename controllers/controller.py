@@ -26,6 +26,7 @@ FastFoodOrder = None
 FastFoodOrderItem = None
 
 PRIMARY_STOCK_LOCATION = "balcao"
+CATEGORY_DEFAULT_STOCK_LOCATION = "armazem"
 CASH_REGISTER_MAX_DURATION = timedelta(hours=24)
 
 # ===================================================================
@@ -940,7 +941,7 @@ def adopt_shared_product(
         min_quantity=Decimal("0.00"),
         max_quantity=None,
         reserved_quantity=Decimal("0.00"),
-        storage_location=PRIMARY_STOCK_LOCATION,
+        storage_location=CATEGORY_DEFAULT_STOCK_LOCATION,
     )
     db.add(inventory)
     db.commit()
@@ -999,7 +1000,7 @@ def create_product(db: Session, product: schemas.PDVProductCreate, terminal_id: 
         min_quantity=Decimal("0.00"),
         max_quantity=None,
         reserved_quantity=Decimal("0.00"),
-        storage_location="balcao"
+        storage_location=CATEGORY_DEFAULT_STOCK_LOCATION
     )
     db.add(inventory)
     db.commit()
