@@ -1148,6 +1148,10 @@ def adjust_stock(db: Session, adjustment: schemas.StockAdjustment, terminal_id: 
         
     inventory.quantity = qty_after
     inventory.updated_at = datetime.utcnow()
+    if movement_type_value == MovementType.IN.value or movement_type_value == "in":
+        inventory.last_restock_at = datetime.utcnow()
+    elif movement_type_value == MovementType.ADJUSTMENT.value or movement_type_value == "adjustment":
+        inventory.last_count_at = datetime.utcnow()
     
     # O valor registrado no campo 'quantity' do movimento deve ser o delta para IN/OUT/SALE
     # Mas para ADJUSTMENT, registramos a diferença necessária para chegar ao valor final.
@@ -1233,10 +1237,12 @@ def transfer_stock(db: Session, transfer: schemas.StockTransfer, terminal_id: in
 
     # 3. Executar transferência
     qty_before_from = inv_from.quantity
-    qty_before_to = inv_to.quantity
     
     inv_from.quantity -= transfer.quantity
     inv_to.quantity += transfer.quantity
+    inv_from.updated_at = datetime.utcnow()
+    inv_to.updated_at = datetime.utcnow()
+    inv_to.last_restock_at = datetime.utcnow()
     
     # 4. Registrar movimentos de estoque (Saída de um, Entrada no outro)
     # Registramos como um movimento especial de transferência
@@ -1245,6 +1251,8 @@ def transfer_stock(db: Session, transfer: schemas.StockTransfer, terminal_id: in
         terminal_id=terminal_id,
         movement_type=MovementType.TRANSFER,
         quantity=transfer.quantity,
+        quantity_before=qty_before_from,
+        quantity_after=inv_from.quantity,
         from_location=transfer.from_location,
         to_location=transfer.to_location,
         notes=transfer.notes or f"Transfer from {transfer.from_location} to {transfer.to_location}",
@@ -1252,13 +1260,9 @@ def transfer_stock(db: Session, transfer: schemas.StockTransfer, terminal_id: in
     )
     db.add(movement)
     db.commit()
+    db.refresh(movement)
     
-    return {
-        "message": "Transfer successful", 
-        "product": product.name,
-        "from": {"location": transfer.from_location, "before": float(qty_before_from), "after": float(inv_from.quantity)},
-        "to": {"location": transfer.to_location, "before": float(qty_before_to), "after": float(inv_to.quantity)}
-    }
+    return movement
 
 # ===================================================================
 # Cash Register
@@ -2995,7 +2999,7 @@ def get_inventory_report(db: Session, terminal_id: int):
     """Gera um relatório detalhado do inventário atual"""
     inventory_items = db.query(PDVInventory).filter(PDVInventory.terminal_id == terminal_id).all()
     
-    total_products = len(inventory_items)
+    unique_products = set()
     total_value = Decimal("0.00")
     total_retail_value = Decimal("0.00")
     low_stock_count = 0
@@ -3006,6 +3010,8 @@ def get_inventory_report(db: Session, terminal_id: int):
         product = inv.product
         if not product or not product.is_active:
             continue
+
+        unique_products.add(product.id)
             
         total_value += product.cost_price * inv.quantity
         total_retail_value += product.price * inv.quantity
@@ -3021,7 +3027,7 @@ def get_inventory_report(db: Session, terminal_id: int):
         report_items.append(inv)
                 
     return {
-        "total_products": total_products,
+        "total_products": len(unique_products),
         "total_value": total_value,
         "total_retail_value": total_retail_value,
         "low_stock_count": low_stock_count,

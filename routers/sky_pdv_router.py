@@ -372,6 +372,17 @@ def list_stock_movements(
     terminal = controller.get_terminal_required(db, current_user.id)
     return controller.get_stock_movements(db, terminal.id, product_id, skip, limit)
 
+@router.get("/inventory/movements", response_model=List[schemas.PDVStockMovement])
+def list_inventory_movements(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Histórico global de movimentações de stock do terminal"""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.get_stock_movements(db, terminal.id, None, skip, limit)
+
 @router.post("/inventory/adjustment", response_model=schemas.PDVStockMovement)
 def adjust_inventory(
     adjustment: schemas.StockAdjustment,
