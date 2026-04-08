@@ -1264,6 +1264,71 @@ def transfer_stock(db: Session, transfer: schemas.StockTransfer, terminal_id: in
     
     return movement
 
+def update_inventory_settings(
+    db: Session,
+    product_id: int,
+    terminal_id: int,
+    storage_location: str,
+    updates: schemas.PDVInventoryUpdate,
+):
+    product = db.query(PDVProduct).filter(
+        PDVProduct.id == product_id,
+        PDVProduct.terminal_id == terminal_id,
+    ).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    inventory = db.query(PDVInventory).filter(
+        PDVInventory.product_id == product_id,
+        PDVInventory.terminal_id == terminal_id,
+        PDVInventory.storage_location == storage_location,
+    ).first()
+
+    if not inventory:
+        inventory = PDVInventory(
+            product_id=product_id,
+            terminal_id=terminal_id,
+            storage_location=storage_location,
+            quantity=Decimal("0.00"),
+            min_quantity=Decimal("0.00"),
+            max_quantity=None,
+            reserved_quantity=Decimal("0.00"),
+        )
+        db.add(inventory)
+        db.commit()
+        db.refresh(inventory)
+
+    if updates.min_quantity is not None and updates.min_quantity < 0:
+        raise HTTPException(status_code=400, detail="Minimum stock cannot be negative")
+    if updates.max_quantity is not None and updates.max_quantity < 0:
+        raise HTTPException(status_code=400, detail="Maximum stock cannot be negative")
+    if (
+        updates.min_quantity is not None
+        and updates.max_quantity is not None
+        and updates.max_quantity < updates.min_quantity
+    ):
+        raise HTTPException(status_code=400, detail="Maximum stock cannot be lower than minimum stock")
+
+    if updates.quantity is not None:
+        if updates.quantity < 0:
+            raise HTTPException(status_code=400, detail="Stock cannot be negative")
+        inventory.quantity = updates.quantity
+        inventory.last_count_at = datetime.utcnow()
+
+    if updates.min_quantity is not None:
+        inventory.min_quantity = updates.min_quantity
+
+    if updates.max_quantity is not None:
+        inventory.max_quantity = updates.max_quantity
+
+    inventory.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(inventory)
+
+    inventory.product_name = product.name
+    inventory.product_sku = product.sku
+    return inventory
+
 # ===================================================================
 # Cash Register
 # ===================================================================

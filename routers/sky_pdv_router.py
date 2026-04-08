@@ -414,6 +414,19 @@ def get_inventory_report(
     terminal = controller.get_terminal_required(db, current_user.id)
     return controller.get_inventory_report(db, terminal.id)
 
+@router.put("/inventory/{product_id}", response_model=schemas.PDVInventory)
+def update_inventory_config(
+    product_id: int,
+    updates: schemas.PDVInventoryUpdate,
+    storage_location: str = "balcao",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Atualizar configuracoes do inventario por local"""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_manage_stock")
+    return controller.update_inventory_settings(db, product_id, terminal.id, storage_location, updates)
+
 # ===================================================================
 # Cash Register Endpoints
 # ===================================================================
