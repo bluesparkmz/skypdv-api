@@ -896,7 +896,7 @@ def adopt_shared_product(
     price: Optional[Decimal] = None,
     cost_price: Optional[Decimal] = None,
     initial_stock: Optional[Decimal] = None,
-    initial_stock_location: str = StorageLocationEnum.BALCAO.value,
+    initial_stock_location: str = "balcao",
 ):
     source_product = db.query(PDVProduct).filter(
         PDVProduct.id == source_product_id,
