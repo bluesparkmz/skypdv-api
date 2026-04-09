@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+﻿from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Optional, Any
 from io import BytesIO
@@ -64,25 +64,25 @@ def create_terminal_for_user(db: Session, user_id: int, data: schemas.PDVTermina
     db.commit()
     db.refresh(terminal)
 
-    # Verificar se é um estabelecimento FastFood e criar restaurante automaticamente
+    # Verificar se Ã© um estabelecimento FastFood e criar restaurante automaticamente
     business_type = None
     if data and data.settings and isinstance(data.settings, dict):
         business_type = data.settings.get("business_type")
     
-    # Tipos que são FastFood: restaurant, cafeteria, snackbar
+    # Tipos que sÃ£o FastFood: restaurant, cafeteria, snackbar
     is_fastfood_type = business_type in ["restaurant", "cafeteria", "snackbar"]
     
     if is_fastfood_type and Restaurant is not None:
         try:
             from fastfood.controller import generate_restaurant_slug
             
-            # Verificar se já existe restaurante para este usuário
+            # Verificar se jÃ¡ existe restaurante para este usuÃ¡rio
             existing_restaurant = db.query(Restaurant).filter(Restaurant.user_id == user_id).first()
             if not existing_restaurant:
                 # Criar restaurante FastFood automaticamente
                 restaurant_name = terminal_name or (user.name if user.name else f"Estabelecimento {user_id}")
                 
-                # Gerar slug único
+                # Gerar slug Ãºnico
                 restaurant_slug = generate_restaurant_slug(db, restaurant_name)
                 
                 # Criar restaurante
@@ -103,7 +103,7 @@ def create_terminal_for_user(db: Session, user_id: int, data: schemas.PDVTermina
                     longitude=None,
                     cover_image=None,
                     images=None,
-                    is_open=False,  # Começar fechado, usuário pode abrir depois
+                    is_open=False,  # ComeÃ§ar fechado, usuÃ¡rio pode abrir depois
                     active=True
                 )
                 db.add(db_restaurant)
@@ -117,7 +117,7 @@ def create_terminal_for_user(db: Session, user_id: int, data: schemas.PDVTermina
             import traceback
             traceback.print_exc()
             print(f"SkyPDV: Erro ao criar restaurante FastFood automaticamente: {e}")
-            # Continuar mesmo se falhar - o terminal já foi criado
+            # Continuar mesmo se falhar - o terminal jÃ¡ foi criado
 
     local_supplier = PDVSupplier(
         terminal_id=terminal.id,
@@ -128,17 +128,17 @@ def create_terminal_for_user(db: Session, user_id: int, data: schemas.PDVTermina
     db.add(local_supplier)
     db.commit()
 
-    # Criar categorias padrão
+    # Criar categorias padrÃ£o
     default_categories = [
-        {"name": "Alimentos", "icon": "🍔", "color": "#10b981"},
-        {"name": "Bebidas", "icon": "🥤", "color": "#3b82f6"},
-        {"name": "Eletrônicos", "icon": "📱", "color": "#8b5cf6"},
-        {"name": "Vestuário", "icon": "👕", "color": "#ec4899"},
-        {"name": "Higiene", "icon": "🧴", "color": "#06b6d4"},
-        {"name": "Limpeza", "icon": "🧹", "color": "#f59e0b"},
-        {"name": "Papelaria", "icon": "📝", "color": "#6366f1"},
-        {"name": "Farmácia", "icon": "💊", "color": "#ef4444"},
-        {"name": "Outros", "icon": "📦", "color": "#64748b"},
+        {"name": "Alimentos", "icon": "ðŸ”", "color": "#10b981"},
+        {"name": "Bebidas", "icon": "ðŸ¥¤", "color": "#3b82f6"},
+        {"name": "EletrÃ´nicos", "icon": "ðŸ“±", "color": "#8b5cf6"},
+        {"name": "VestuÃ¡rio", "icon": "ðŸ‘•", "color": "#ec4899"},
+        {"name": "Higiene", "icon": "ðŸ§´", "color": "#06b6d4"},
+        {"name": "Limpeza", "icon": "ðŸ§¹", "color": "#f59e0b"},
+        {"name": "Papelaria", "icon": "ðŸ“", "color": "#6366f1"},
+        {"name": "FarmÃ¡cia", "icon": "ðŸ’Š", "color": "#ef4444"},
+        {"name": "Outros", "icon": "ðŸ“¦", "color": "#64748b"},
     ]
     
     for cat_data in default_categories:
@@ -154,12 +154,12 @@ def create_terminal_for_user(db: Session, user_id: int, data: schemas.PDVTermina
 
     default_expense_categories = [
         {"name": "Renda da Loja", "code": "aluguel", "icon": "store", "color": "#ef4444"},
-        {"name": "Salário", "code": "salario", "icon": "users", "color": "#f59e0b"},
+        {"name": "SalÃ¡rio", "code": "salario", "icon": "users", "color": "#f59e0b"},
         {"name": "Internet", "code": "internet", "icon": "wifi", "color": "#3b82f6"},
-        {"name": "Combustível", "code": "combustivel", "icon": "truck", "color": "#10b981"},
+        {"name": "CombustÃ­vel", "code": "combustivel", "icon": "truck", "color": "#10b981"},
         {"name": "Fornecedor", "code": "fornecedor", "icon": "package", "color": "#8b5cf6"},
         {"name": "Energia", "code": "energia", "icon": "bolt", "color": "#06b6d4"},
-        {"name": "Água", "code": "agua", "icon": "droplet", "color": "#0ea5e9"},
+        {"name": "Ãgua", "code": "agua", "icon": "droplet", "color": "#0ea5e9"},
         {"name": "Outras Despesas", "code": "outros", "icon": "receipt", "color": "#64748b"},
     ]
 
@@ -184,11 +184,11 @@ def create_terminal_for_user(db: Session, user_id: int, data: schemas.PDVTermina
 
 
 def get_or_create_terminal(db: Session, user_id: int, create_if_missing: bool = True):
-    """Obter terminal para o usuário.
+    """Obter terminal para o usuÃ¡rio.
 
     - Se for dono de um terminal: retorna.
     - Se estiver associado a um terminal: retorna.
-    - Se não existir:
+    - Se nÃ£o existir:
         - create_if_missing=True: cria
         - create_if_missing=False: retorna None
     """
@@ -249,16 +249,16 @@ def update_terminal(db: Session, terminal_id: int, updates: schemas.PDVTerminalU
 # ===================================================================
 
 def is_terminal_admin(db: Session, terminal_id: int, user_id: int) -> bool:
-    """Verifica se um usuário é admin do terminal (dono ou com role ADMIN)"""
+    """Verifica se um usuÃ¡rio Ã© admin do terminal (dono ou com role ADMIN)"""
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         return False
     
-    # Dono do terminal é sempre admin
+    # Dono do terminal Ã© sempre admin
     if terminal.user_id == user_id:
         return True
     
-    # Verificar se é usuário associado com role ADMIN
+    # Verificar se Ã© usuÃ¡rio associado com role ADMIN
     terminal_user = db.query(PDVTerminalUser).filter(
         PDVTerminalUser.terminal_id == terminal_id,
         PDVTerminalUser.user_id == user_id,
@@ -271,16 +271,16 @@ def is_terminal_admin(db: Session, terminal_id: int, user_id: int) -> bool:
     return False
 
 def check_terminal_permission(db: Session, terminal_id: int, user_id: int, permission: str) -> bool:
-    """Verifica se um usuário tem permissão específica no terminal"""
+    """Verifica se um usuÃ¡rio tem permissÃ£o especÃ­fica no terminal"""
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         return False
     
-    # Dono do terminal tem todas as permissões
+    # Dono do terminal tem todas as permissÃµes
     if terminal.user_id == user_id:
         return True
     
-    # Verificar se é usuário associado
+    # Verificar se Ã© usuÃ¡rio associado
     terminal_user = db.query(PDVTerminalUser).filter(
         PDVTerminalUser.terminal_id == terminal_id,
         PDVTerminalUser.user_id == user_id,
@@ -290,11 +290,11 @@ def check_terminal_permission(db: Session, terminal_id: int, user_id: int, permi
     if not terminal_user:
         return False
     
-    # Se role é ADMIN, tem todas as permissões
+    # Se role Ã© ADMIN, tem todas as permissÃµes
     if terminal_user.role == PDVTerminalRole.ADMIN:
         return True
     
-    # Verificar permissão específica
+    # Verificar permissÃ£o especÃ­fica
     permission_map = {
         "can_sell": terminal_user.can_sell,
         "can_open_cash_register": terminal_user.can_open_cash_register,
@@ -337,7 +337,7 @@ def get_primary_inventory(db: Session, product_id: int, terminal_id: int, create
 
 
 def get_terminal_users(db: Session, terminal_id: int, user_id: int) -> List[dict]:
-    """Lista todos os usuários associados ao terminal"""
+    """Lista todos os usuÃ¡rios associados ao terminal"""
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
@@ -354,7 +354,7 @@ def get_terminal_users(db: Session, terminal_id: int, user_id: int) -> List[dict
         PDVTerminalInvite.accepted_at.is_(None),
     ).all()
     
-    # Converter para dict com informações do usuário
+    # Converter para dict com informaÃ§Ãµes do usuÃ¡rio
     result = []
     for tu in terminal_users:
         user = db.query(User).filter(User.id == tu.user_id).first()
@@ -409,7 +409,7 @@ def get_terminal_users(db: Session, terminal_id: int, user_id: int) -> List[dict
 
 
 def add_terminal_user(db: Session, terminal_id: int, user_email: str, user_data: schemas.PDVTerminalUserCreate, inviter_id: int) -> dict:
-    """Adiciona um usuário ao terminal pelo email"""
+    """Adiciona um usuÃ¡rio ao terminal pelo email"""
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
@@ -417,7 +417,7 @@ def add_terminal_user(db: Session, terminal_id: int, user_email: str, user_data:
     if terminal.user_id != inviter_id and not check_terminal_permission(db, terminal_id, inviter_id, "can_manage_users"):
         raise HTTPException(status_code=403, detail="You don't have permission to add users to this terminal")
     
-    # Buscar usuário pelo email
+    # Buscar usuÃ¡rio pelo email
     normalized_email = user_email.strip().lower()
     role_map = {
         "admin": PDVTerminalRole.ADMIN.value,
@@ -480,7 +480,7 @@ def add_terminal_user(db: Session, terminal_id: int, user_email: str, user_data:
             "user_email": invite.invited_email,
         }
     
-    # Verificar se já está associado
+    # Verificar se jÃ¡ estÃ¡ associado
     existing = db.query(PDVTerminalUser).filter(
         PDVTerminalUser.terminal_id == terminal_id,
         PDVTerminalUser.user_id == user.id
@@ -490,7 +490,7 @@ def add_terminal_user(db: Session, terminal_id: int, user_email: str, user_data:
         raise HTTPException(status_code=400, detail="User is already associated with this terminal")
     
     # Converter role do schema para o valor do enum do modelo
-    # Criar associação
+    # Criar associaÃ§Ã£o
     terminal_user = PDVTerminalUser(
         terminal_id=terminal_id,
         user_id=user.id,
@@ -534,7 +534,7 @@ def add_terminal_user(db: Session, terminal_id: int, user_email: str, user_data:
 
 
 def update_terminal_user(db: Session, terminal_id: int, terminal_user_id: int, updates: schemas.PDVTerminalUserUpdate, updater_id: int) -> dict:
-    """Atualiza permissões de um usuário do terminal"""
+    """Atualiza permissÃµes de um usuÃ¡rio do terminal"""
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
@@ -555,7 +555,7 @@ def update_terminal_user(db: Session, terminal_id: int, terminal_user_id: int, u
         if not pending_invite:
             raise HTTPException(status_code=404, detail="Terminal user not found")
     
-    # Não permitir remover o dono do terminal
+    # NÃ£o permitir remover o dono do terminal
     if terminal_user and terminal_user.user_id == terminal.user_id:
         raise HTTPException(status_code=400, detail="Cannot modify the terminal owner")
     
@@ -623,7 +623,7 @@ def update_terminal_user(db: Session, terminal_id: int, terminal_user_id: int, u
 
 
 def remove_terminal_user(db: Session, terminal_id: int, terminal_user_id: int, remover_id: int):
-    """Remove um usuário do terminal"""
+    """Remove um usuÃ¡rio do terminal"""
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
@@ -646,7 +646,7 @@ def remove_terminal_user(db: Session, terminal_id: int, terminal_user_id: int, r
         db.commit()
         return
     
-    # Não permitir remover o dono do terminal
+    # NÃ£o permitir remover o dono do terminal
     if terminal_user.user_id == terminal.user_id:
         raise HTTPException(status_code=400, detail="Cannot remove the terminal owner")
     
@@ -702,7 +702,7 @@ def connect_fastfood_restaurant(db: Session, terminal_id: int, restaurant_id: in
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
         
-    # Verificar se já existe
+    # Verificar se jÃ¡ existe
     existing = db.query(PDVSupplier).filter(
         PDVSupplier.terminal_id == terminal_id,
         PDVSupplier.source_type == SourceType.FASTFOOD,
@@ -727,7 +727,7 @@ def connect_fastfood_restaurant(db: Session, terminal_id: int, restaurant_id: in
     # Se sync=True, associar produtos FastFood existentes ao fornecedor
     if sync:
         # Associar todos os PDVProducts is_fastfood=true e sem supplier_id a este fornecedor
-        # (caso tenham sido criados manualmente antes da conexão)
+        # (caso tenham sido criados manualmente antes da conexÃ£o)
         fastfood_products = db.query(PDVProduct).filter(
             PDVProduct.terminal_id == terminal_id,
             PDVProduct.is_fastfood == True,
@@ -780,7 +780,7 @@ def get_products(
         
     products = query.offset(skip).limit(limit).all()
     
-    # Anexar informações de estoque
+    # Anexar informaÃ§Ãµes de estoque
     for p in products:
         if p.track_stock:
             get_primary_inventory(db, p.id, terminal_id, create_if_missing=True)
@@ -788,7 +788,7 @@ def get_products(
     return products
 
 def get_categories(db: Session, terminal_id: int):
-    """Listar categorias únicas usadas no terminal"""
+    """Listar categorias Ãºnicas usadas no terminal"""
     categories = db.query(PDVProduct.category).filter(
         PDVProduct.terminal_id == terminal_id,
         PDVProduct.category.isnot(None),
@@ -815,7 +815,7 @@ def get_product_categories(db: Session, terminal_id: int):
     return categories
 
 def get_product_stats(db: Session, terminal_id: int):
-    """Estatísticas de produtos do terminal"""
+    """EstatÃ­sticas de produtos do terminal"""
     total = db.query(PDVProduct).filter(PDVProduct.terminal_id == terminal_id).count()
     active = db.query(PDVProduct).filter(PDVProduct.terminal_id == terminal_id, PDVProduct.is_active == True).count()
     fastfood = db.query(PDVProduct).filter(PDVProduct.terminal_id == terminal_id, PDVProduct.is_fastfood == True).count()
@@ -933,18 +933,19 @@ def adopt_shared_product(
     db.commit()
     db.refresh(db_product)
 
-    qty = initial_stock if initial_stock is not None else Decimal("0.00")
-    inventory = PDVInventory(
-        product_id=db_product.id,
-        terminal_id=terminal_id,
-        quantity=qty,
-        min_quantity=Decimal("0.00"),
-        max_quantity=None,
-        reserved_quantity=Decimal("0.00"),
-        storage_location=CATEGORY_DEFAULT_STOCK_LOCATION,
-    )
-    db.add(inventory)
-    db.commit()
+    if db_product.track_stock:
+        qty = initial_stock if initial_stock is not None else Decimal("0.00")
+        inventory = PDVInventory(
+            product_id=db_product.id,
+            terminal_id=terminal_id,
+            quantity=qty,
+            min_quantity=Decimal("0.00"),
+            max_quantity=None,
+            reserved_quantity=Decimal("0.00"),
+            storage_location=CATEGORY_DEFAULT_STOCK_LOCATION,
+        )
+        db.add(inventory)
+        db.commit()
     db.refresh(db_product)
     return db_product
 
@@ -993,32 +994,33 @@ def create_product(db: Session, product: schemas.PDVProductCreate, terminal_id: 
     if initial_qty < 0:
         raise HTTPException(status_code=400, detail="Initial stock cannot be negative")
     
-    inventory = PDVInventory(
-        product_id=db_product.id,
-        terminal_id=terminal_id,
-        quantity=initial_qty,
-        min_quantity=Decimal("0.00"),
-        max_quantity=None,
-        reserved_quantity=Decimal("0.00"),
-        storage_location=CATEGORY_DEFAULT_STOCK_LOCATION
-    )
-    db.add(inventory)
-    db.commit()
-    
-    # Se houve estoque inicial, registrar movimento
-    if initial_qty > 0:
-        movement = PDVStockMovement(
+    if db_product.track_stock:
+        inventory = PDVInventory(
             product_id=db_product.id,
             terminal_id=terminal_id,
-            movement_type=MovementType.IN,
             quantity=initial_qty,
-            quantity_before=0,
-            quantity_after=initial_qty,
-            notes="Initial stock",
-            created_at=datetime.utcnow()
+            min_quantity=Decimal("0.00"),
+            max_quantity=None,
+            reserved_quantity=Decimal("0.00"),
+            storage_location=CATEGORY_DEFAULT_STOCK_LOCATION
         )
-        db.add(movement)
+        db.add(inventory)
+        db.commit()
         
+        # Se houve estoque inicial, registrar movimento
+        if initial_qty > 0:
+            movement = PDVStockMovement(
+                product_id=db_product.id,
+                terminal_id=terminal_id,
+                movement_type=MovementType.IN,
+                quantity=initial_qty,
+                quantity_before=0,
+                quantity_after=initial_qty,
+                notes="Initial stock",
+                created_at=datetime.utcnow()
+            )
+            db.add(movement)
+    
     db.commit()
     db.refresh(db_product)
     return db_product
@@ -1052,6 +1054,9 @@ def update_product(db: Session, product_id: int, updates: schemas.PDVProductUpda
     for field, value in update_data.items():
         setattr(product, field, value)
 
+    if product.track_stock is False:
+        initial_stock = None
+
     if initial_stock is not None:
         if initial_stock < 0:
             raise HTTPException(status_code=400, detail="Stock cannot be negative")
@@ -1071,6 +1076,7 @@ def update_product(db: Session, product_id: int, updates: schemas.PDVProductUpda
             notes="Stock updated from product form",
         )
         db.add(movement)
+        _notify_stock_critical(db, product, inventory, qty_before, qty_after)
 
     db.commit()
     db.refresh(product)
@@ -1099,8 +1105,8 @@ def batch_update_fastfood_flag(db: Session, product_ids: List[int], is_fastfood:
 
 def adjust_stock(db: Session, adjustment: schemas.StockAdjustment, terminal_id: int, user_id: int):
     """
-    Ajustar estoque de um produto em um local específico.
-    Se o inventário para este local não existir, ele será criado.
+    Ajustar estoque de um produto em um local especÃ­fico.
+    Se o inventÃ¡rio para este local nÃ£o existir, ele serÃ¡ criado.
     """
     product = db.query(PDVProduct).filter(
         PDVProduct.id == adjustment.product_id, 
@@ -1110,7 +1116,7 @@ def adjust_stock(db: Session, adjustment: schemas.StockAdjustment, terminal_id: 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
         
-    # Encontrar ou criar inventário para o local específico
+    # Encontrar ou criar inventÃ¡rio para o local especÃ­fico
     inventory = db.query(PDVInventory).filter(
         PDVInventory.product_id == product.id,
         PDVInventory.terminal_id == terminal_id,
@@ -1130,8 +1136,8 @@ def adjust_stock(db: Session, adjustment: schemas.StockAdjustment, terminal_id: 
         
     qty_before = inventory.quantity
     
-    # Converter MovementTypeEnum (schema) para MovementType (model) se necessário
-    # O Pydantic enum pode vir como string ou como enum, então comparamos pelo valor
+    # Converter MovementTypeEnum (schema) para MovementType (model) se necessÃ¡rio
+    # O Pydantic enum pode vir como string ou como enum, entÃ£o comparamos pelo valor
     movement_type_value = adjustment.movement_type.value if hasattr(adjustment.movement_type, 'value') else str(adjustment.movement_type)
     
     # Calcular nova quantidade
@@ -1155,7 +1161,7 @@ def adjust_stock(db: Session, adjustment: schemas.StockAdjustment, terminal_id: 
         inventory.last_count_at = datetime.utcnow()
     
     # O valor registrado no campo 'quantity' do movimento deve ser o delta para IN/OUT/SALE
-    # Mas para ADJUSTMENT, registramos a diferença necessária para chegar ao valor final.
+    # Mas para ADJUSTMENT, registramos a diferenÃ§a necessÃ¡ria para chegar ao valor final.
     movement_qty = adjustment.quantity
     if movement_type_value == MovementType.OUT.value or movement_type_value == "out":
         movement_qty = -adjustment.quantity
@@ -1163,7 +1169,7 @@ def adjust_stock(db: Session, adjustment: schemas.StockAdjustment, terminal_id: 
         movement_qty = qty_after - qty_before
     
     # Converter MovementTypeEnum para MovementType (model) para salvar no banco
-    # O enum do modelo espera MovementType, então convertemos o valor
+    # O enum do modelo espera MovementType, entÃ£o convertemos o valor
     db_movement_type = MovementType.IN
     if movement_type_value == MovementType.OUT.value or movement_type_value == "out":
         db_movement_type = MovementType.OUT
@@ -1190,13 +1196,14 @@ def adjust_stock(db: Session, adjustment: schemas.StockAdjustment, terminal_id: 
     )
     
     db.add(movement)
+    _notify_stock_critical(db, product, inventory, qty_before, qty_after)
     db.commit()
     
     return movement
 
 def transfer_stock(db: Session, transfer: schemas.StockTransfer, terminal_id: int, user_id: int):
     """
-    Transferir estoque entre locais de armazenamento (ex: Armazém -> Balcão).
+    Transferir estoque entre locais de armazenamento (ex: ArmazÃ©m -> BalcÃ£o).
     """
     product = db.query(PDVProduct).filter(
         PDVProduct.id == transfer.product_id, 
@@ -1236,7 +1243,7 @@ def transfer_stock(db: Session, transfer: schemas.StockTransfer, terminal_id: in
         db.commit()
         db.refresh(inv_to)
 
-    # 3. Executar transferência
+    # 3. Executar transferÃªncia
     qty_before_from = inv_from.quantity
     
     inv_from.quantity -= transfer.quantity
@@ -1245,8 +1252,8 @@ def transfer_stock(db: Session, transfer: schemas.StockTransfer, terminal_id: in
     inv_to.updated_at = datetime.utcnow()
     inv_to.last_restock_at = datetime.utcnow()
     
-    # 4. Registrar movimentos de estoque (Saída de um, Entrada no outro)
-    # Registramos como um movimento especial de transferência
+    # 4. Registrar movimentos de estoque (SaÃ­da de um, Entrada no outro)
+    # Registramos como um movimento especial de transferÃªncia
     movement = PDVStockMovement(
         product_id=product.id,
         terminal_id=terminal_id,
@@ -1260,6 +1267,7 @@ def transfer_stock(db: Session, transfer: schemas.StockTransfer, terminal_id: in
         created_by=user_id
     )
     db.add(movement)
+    _notify_stock_critical(db, product, inv_from, qty_before_from, inv_from.quantity)
     db.commit()
     db.refresh(movement)
     
@@ -1387,6 +1395,44 @@ def _get_terminal_admin_phone_numbers(db: Session, terminal_id: int) -> List[str
         _add(terminal.phone)
 
     return numbers
+
+
+def _get_inventory_critical_threshold(inventory: PDVInventory) -> Decimal:
+    minimum = Decimal(str(inventory.min_quantity or 0))
+    return minimum if minimum > 0 else Decimal("5.00")
+
+
+def _notify_stock_critical(
+    db: Session,
+    product: PDVProduct,
+    inventory: Optional[PDVInventory],
+    quantity_before: Decimal,
+    quantity_after: Decimal,
+) -> None:
+    if not product or not product.track_stock or not inventory:
+        return
+
+    threshold = _get_inventory_critical_threshold(inventory)
+    if quantity_after > threshold or quantity_before <= threshold:
+        return
+
+    phones = _get_terminal_admin_phone_numbers(db, product.terminal_id)
+    if not phones:
+        return
+
+    location_label = (inventory.storage_location or PRIMARY_STOCK_LOCATION).capitalize()
+    if quantity_after <= 0:
+        status_label = "esgotou"
+    else:
+        status_label = "entrou em estoque critico"
+
+    message = (
+        f"Alerta de estoque SkyPDV: o produto {product.name} {status_label} em {location_label}. "
+        f"Quantidade atual: {quantity_after}. Limite critico: {threshold}."
+    )
+
+    for phone in phones:
+        send_whatsapp_text(phone, message)
 
 
 def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) -> bytes:
@@ -1588,7 +1634,7 @@ def get_current_register(db: Session, terminal_id: int, user_id: Optional[int] =
     return register
 
 def open_register(db: Session, data: schemas.PDVCashRegisterOpen, terminal_id: int, user_id: int):
-    # Verificar se o usuário já tem caixa aberto (não bloqueia outros usuários)
+    # Verificar se o usuÃ¡rio jÃ¡ tem caixa aberto (nÃ£o bloqueia outros usuÃ¡rios)
     existing = get_current_register(db, terminal_id, user_id=user_id)
     if existing:
         raise HTTPException(status_code=400, detail="You already have an open cash register")
@@ -1614,16 +1660,16 @@ def close_register(db: Session, data: schemas.PDVCashRegisterClose, terminal_id:
         raise HTTPException(status_code=404, detail="No open cash register found")
         
     if register.user_id != user_id:
-        # Idealmente apenas o dono ou o próprio operador fecha, mas simplificando
+        # Idealmente apenas o dono ou o prÃ³prio operador fecha, mas simplificando
         raise HTTPException(status_code=403, detail="Only the operator who opened the cash register can close it")
         
     # Calcular esperados
     expected = (
         register.opening_amount + 
         register.total_cash + 
-        register.total_skywallet +  # SkyWallet conta como valor monetário real
-        register.total_card +       # Cartão também
-        register.total_mpesa        # Mpesa também
+        register.total_skywallet +  # SkyWallet conta como valor monetÃ¡rio real
+        register.total_card +       # CartÃ£o tambÃ©m
+        register.total_mpesa        # Mpesa tambÃ©m
     )
     
     register.closing_amount = data.closing_amount
@@ -1697,7 +1743,7 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
     subtotal = Decimal("0.00")
     
     for item_data in sale_data.items:
-        # Apenas PDVProduct (obrigatório)
+        # Apenas PDVProduct (obrigatÃ³rio)
         product = db.query(PDVProduct).filter(
             PDVProduct.id == item_data.product_id,
             PDVProduct.terminal_id == terminal_id,
@@ -1719,11 +1765,11 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
                     detail=f"Insufficient stock for {product.name}. Available: {available_quantity}",
                 )
             
-        # Preço (já vem com IVA incluído)
+        # PreÃ§o (jÃ¡ vem com IVA incluÃ­do)
         unit_price = item_data.unit_price if item_data.unit_price is not None else product.price
         
         # Calcular totais do item
-        # O preço já inclui IVA, então o total do item é o preço * quantidade
+        # O preÃ§o jÃ¡ inclui IVA, entÃ£o o total do item Ã© o preÃ§o * quantidade
         item_total_raw = unit_price * item_data.quantity
         discount = item_data.discount_amount + (item_total_raw * (item_data.discount_percent / 100))
         item_total = item_total_raw - discount
@@ -1739,14 +1785,14 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
         subtotal += item_total
         
     # 3. Calcular totais da venda
-    # Os preços já vêm com IVA incluído
-    # Total = subtotal (já com IVA)
+    # Os preÃ§os jÃ¡ vÃªm com IVA incluÃ­do
+    # Total = subtotal (jÃ¡ com IVA)
     # Subtotal sem IVA = total / 1.16
     # IVA = total - subtotal_sem_iva
     sale_discount = sale_data.discount_amount + (subtotal * (sale_data.discount_percent / 100))
     total_with_discount = subtotal - sale_discount
     
-    # Calcular IVA: se o total já inclui IVA, extrair o IVA
+    # Calcular IVA: se o total jÃ¡ inclui IVA, extrair o IVA
     # total = subtotal_sem_iva * 1.16
     # subtotal_sem_iva = total / 1.16
     # iva = total - subtotal_sem_iva
@@ -1754,14 +1800,14 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
     subtotal_without_tax = total_with_discount / (Decimal("1.00") + TAX_RATE)
     tax = total_with_discount - subtotal_without_tax
     
-    # O total final já está correto (subtotal com desconto)
+    # O total final jÃ¡ estÃ¡ correto (subtotal com desconto)
     total = total_with_discount
     effective_amount_paid = sale_data.amount_paid if sale_data.amount_paid is not None else total
     if sale_data.payment_method == PaymentMethod.CASH and effective_amount_paid < total:
         raise HTTPException(status_code=400, detail="Amount paid cannot be lower than total for cash sales")
     
-    # 4. Processar Pagamento (Integração SkyWallet se necessário)
-    payment_status = "paid" # Padrão para POS, assumindo pagamento imediato
+    # 4. Processar Pagamento (IntegraÃ§Ã£o SkyWallet se necessÃ¡rio)
+    payment_status = "paid" # PadrÃ£o para POS, assumindo pagamento imediato
     
     if sale_data.payment_method == PaymentMethod.SKYWALLET:
         # TODO: Chamar controler skywallet para processar pagamento se tiver user_id ou msisdn
@@ -1769,7 +1815,7 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
         pass
         
     # 5. Criar Venda
-    # Salvar subtotal sem IVA (já calculado acima como subtotal_without_tax)
+    # Salvar subtotal sem IVA (jÃ¡ calculado acima como subtotal_without_tax)
     sale = PDVSale(
         terminal_id=terminal_id,
         cash_register_id=register.id,
@@ -1781,7 +1827,7 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
         discount_amount=sale_discount,
         discount_percent=sale_data.discount_percent,
         tax_amount=tax,  # IVA calculado
-        total=total,  # Total com IVA incluído
+        total=total,  # Total com IVA incluÃ­do
         
         payment_method=sale_data.payment_method,
         payment_status=payment_status,
@@ -1877,7 +1923,7 @@ def get_sales(
 ):
     """
     Lista vendas do terminal.
-    Se user_id for fornecido, filtra apenas vendas criadas por esse usuário.
+    Se user_id for fornecido, filtra apenas vendas criadas por esse usuÃ¡rio.
     """
     query = db.query(PDVSale).filter(PDVSale.terminal_id == terminal_id)
     
@@ -1905,8 +1951,8 @@ def get_sales(
 
 def get_sale_details(db: Session, sale_id: int, terminal_id: int, user_id: Optional[int] = None):
     """
-    Obter detalhes de uma venda específica.
-    Se user_id for fornecido, só retorna se a venda foi criada por esse usuário.
+    Obter detalhes de uma venda especÃ­fica.
+    Se user_id for fornecido, sÃ³ retorna se a venda foi criada por esse usuÃ¡rio.
     """
     query = db.query(PDVSale).filter(PDVSale.id == sale_id, PDVSale.terminal_id == terminal_id)
     
@@ -1925,8 +1971,8 @@ def get_sale_details(db: Session, sale_id: int, terminal_id: int, user_id: Optio
 
 def get_dashboard_stats(db: Session, terminal_id: int, user_id: Optional[int] = None):
     """
-    Estatísticas do dashboard.
-    Se user_id for fornecido, filtra apenas vendas criadas por esse usuário.
+    EstatÃ­sticas do dashboard.
+    Se user_id for fornecido, filtra apenas vendas criadas por esse usuÃ¡rio.
     """
     now = datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1964,7 +2010,7 @@ def get_dashboard_stats(db: Session, terminal_id: int, user_id: Optional[int] = 
         PDVSale.created_at >= week_start
     ).first()
     
-    # Mês
+    # MÃªs
     month_sales_data = db.query(
         func.count(PDVSale.id), 
         func.sum(PDVSale.total)
@@ -1991,7 +2037,7 @@ def get_dashboard_stats(db: Session, terminal_id: int, user_id: Optional[int] = 
     # Caixa atual do proprio utilizador
     current_register = get_current_register(db, terminal_id, user_id=user_id)
     
-    # Top Products (filtrado por usuário se não for admin)
+    # Top Products (filtrado por usuÃ¡rio se nÃ£o for admin)
     top_products_query = db.query(
         PDVSaleItem.product_id,
         PDVSaleItem.product_name,
@@ -2018,7 +2064,7 @@ def get_dashboard_stats(db: Session, terminal_id: int, user_id: Optional[int] = 
             "profit": Decimal("0.00") # WIP: Cost calculation
         })
     
-    # Breakdown por pagamento (Mês)
+    # Breakdown por pagamento (MÃªs)
     payment_methods_query = db.query(
         PDVSale.payment_method,
         func.sum(PDVSale.total)
@@ -2043,7 +2089,7 @@ def get_dashboard_stats(db: Session, terminal_id: int, user_id: Optional[int] = 
             "percentage": round(float(percentage), 1)
         }
 
-    # Breakdown diário da semana (para o gráfico)
+    # Breakdown diÃ¡rio da semana (para o grÃ¡fico)
     weekly_breakdown = get_sales_by_day(db, terminal_id, week_start, now, user_id)
 
     return {
@@ -2065,8 +2111,8 @@ def get_dashboard_stats(db: Session, terminal_id: int, user_id: Optional[int] = 
 
 def get_sales_summary(db: Session, terminal_id: int, start_date: datetime, end_date: datetime, user_id: Optional[int] = None):
     """
-    Calcular resumo de vendas para um período específico.
-    Se user_id for fornecido, filtra apenas vendas criadas por esse usuário.
+    Calcular resumo de vendas para um perÃ­odo especÃ­fico.
+    Se user_id for fornecido, filtra apenas vendas criadas por esse usuÃ¡rio.
     """
     # Base filters
     base_filters = [
@@ -2079,7 +2125,7 @@ def get_sales_summary(db: Session, terminal_id: int, start_date: datetime, end_d
     if user_id is not None:
         base_filters.append(PDVSale.created_by == user_id)
     
-    # Vendas concluídas
+    # Vendas concluÃ­das
     sales_query = db.query(PDVSale).filter(
         *base_filters,
         PDVSale.status == "completed"
@@ -2150,9 +2196,9 @@ def get_sales_summary(db: Session, terminal_id: int, start_date: datetime, end_d
 
 def get_periodic_report(db: Session, terminal_id: int, period: str, date_str: str, user_id: Optional[int] = None):
     """
-    Gera relatório baseado em um período simplificado: 'day', 'month', 'year'
+    Gera relatÃ³rio baseado em um perÃ­odo simplificado: 'day', 'month', 'year'
     date_str: '2024-01-21', '2024-01', '2024'
-    Se user_id for fornecido e não for admin, filtra apenas vendas criadas por esse usuário.
+    Se user_id for fornecido e nÃ£o for admin, filtra apenas vendas criadas por esse usuÃ¡rio.
     """
     try:
         if period == "day":
@@ -2162,7 +2208,7 @@ def get_periodic_report(db: Session, terminal_id: int, period: str, date_str: st
         elif period == "month":
             dt = datetime.strptime(date_str, "%Y-%m")
             start = dt.replace(day=1, hour=0, minute=0, second=0)
-            # Próximo mês - 1 dia
+            # PrÃ³ximo mÃªs - 1 dia
             if dt.month == 12:
                 next_month = dt.replace(year=dt.year + 1, month=1)
             else:
@@ -2181,17 +2227,17 @@ def get_periodic_report(db: Session, terminal_id: int, period: str, date_str: st
 
 def get_detailed_monthly_report(db: Session, terminal_id: int, year: int, month: int, user_id: Optional[int] = None):
     """
-    Relatório mensal detalhado com breakdown diário, top produtos, categorias, etc.
-    Se user_id for fornecido e não for admin, filtra apenas vendas criadas por esse usuário.
+    RelatÃ³rio mensal detalhado com breakdown diÃ¡rio, top produtos, categorias, etc.
+    Se user_id for fornecido e nÃ£o for admin, filtra apenas vendas criadas por esse usuÃ¡rio.
     """
     from calendar import month_name, monthrange
     
-    # Calcular período do mês
+    # Calcular perÃ­odo do mÃªs
     start = datetime(year, month, 1, 0, 0, 0)
     last_day = monthrange(year, month)[1]
     end = datetime(year, month, last_day, 23, 59, 59, 999999)
     
-    # Resumo geral do mês
+    # Resumo geral do mÃªs
     summary = get_sales_summary(db, terminal_id, start, end, user_id)
     
     # Base filters para queries
@@ -2229,7 +2275,7 @@ def get_detailed_monthly_report(db: Session, terminal_id: int, year: int, month:
         for cat in categories_query
     ]
     
-    # Breakdown detalhado por método de pagamento
+    # Breakdown detalhado por mÃ©todo de pagamento
     payment_breakdown = {}
     pm_query = db.query(
         PDVSale.payment_method,
@@ -2245,7 +2291,7 @@ def get_detailed_monthly_report(db: Session, terminal_id: int, year: int, month:
             "percentage": round(float((total / summary["total_revenue"] * 100) if summary["total_revenue"] > 0 else 0), 1)
         }
     
-    # Comparação com mês anterior
+    # ComparaÃ§Ã£o com mÃªs anterior
     comparison = None
     if month > 1:
         prev_month = month - 1
@@ -2283,12 +2329,12 @@ def get_detailed_monthly_report(db: Session, terminal_id: int, year: int, month:
 
 def get_detailed_yearly_report(db: Session, terminal_id: int, year: int, user_id: Optional[int] = None):
     """
-    Relatório anual detalhado com breakdown mensal, comparação, tendências, etc.
-    Se user_id for fornecido e não for admin, filtra apenas vendas criadas por esse usuário.
+    RelatÃ³rio anual detalhado com breakdown mensal, comparaÃ§Ã£o, tendÃªncias, etc.
+    Se user_id for fornecido e nÃ£o for admin, filtra apenas vendas criadas por esse usuÃ¡rio.
     """
     from calendar import month_name, monthrange
     
-    # Calcular período do ano
+    # Calcular perÃ­odo do ano
     start = datetime(year, 1, 1, 0, 0, 0)
     end = datetime(year, 12, 31, 23, 59, 59, 999999)
     
@@ -2352,7 +2398,7 @@ def get_detailed_yearly_report(db: Session, terminal_id: int, year: int, user_id
         for cat in categories_query
     ]
     
-    # Breakdown por método de pagamento
+    # Breakdown por mÃ©todo de pagamento
     payment_breakdown = {}
     pm_query = db.query(
         PDVSale.payment_method,
@@ -2372,7 +2418,7 @@ def get_detailed_yearly_report(db: Session, terminal_id: int, year: int, user_id
             "percentage": round(float((total / summary["total_revenue"] * 100) if summary["total_revenue"] > 0 else 0), 1)
         }
     
-    # Tendências sazonais (identificar meses com maior/menor receita)
+    # TendÃªncias sazonais (identificar meses com maior/menor receita)
     if monthly_breakdown:
         revenues = [float(m["total_revenue"]) for m in monthly_breakdown]
         best_month_idx = revenues.index(max(revenues))
@@ -2387,7 +2433,7 @@ def get_detailed_yearly_report(db: Session, terminal_id: int, year: int, user_id
     else:
         seasonal_trends = None
     
-    # Comparação com ano anterior
+    # ComparaÃ§Ã£o com ano anterior
     comparison = None
     prev_start = datetime(year - 1, 1, 1, 0, 0, 0)
     prev_end = datetime(year - 1, 12, 31, 23, 59, 59, 999999)
@@ -2415,7 +2461,7 @@ def get_detailed_yearly_report(db: Session, terminal_id: int, year: int, user_id
     }
 
 def get_top_products_report(db: Session, terminal_id: int, start_date: datetime, end_date: datetime, limit: int = 20, user_id: Optional[int] = None):
-    """Relatório de produtos mais vendidos em um período"""
+    """RelatÃ³rio de produtos mais vendidos em um perÃ­odo"""
     products_query = db.query(
         PDVSaleItem.product_id,
         PDVSaleItem.product_name,
@@ -2458,7 +2504,7 @@ def get_top_products_report(db: Session, terminal_id: int, start_date: datetime,
     return top_products
 
 def get_sales_by_day(db: Session, terminal_id: int, start_date: datetime, end_date: datetime, user_id: Optional[int] = None):
-    """Breakdown de vendas por dia em um período"""
+    """Breakdown de vendas por dia em um perÃ­odo"""
     # Query agrupada por dia
     daily_query = db.query(
         func.date(PDVSale.created_at).label("sale_date"),
@@ -2501,12 +2547,12 @@ def register_fastfood_sale_internal(db: Session, order: Any):
     """Registrar uma venda do FastFood automaticamente no SkyPDV.
 
     Regras:
-    - Esta função deve ser chamada quando o pedido já estiver confirmado/concluído.
-    - Deve ser idempotente (não criar venda duplicada para o mesmo pedido).
-    - Para pedidos com tab (conta aberta), só registra quando a tab for fechada.
+    - Esta funÃ§Ã£o deve ser chamada quando o pedido jÃ¡ estiver confirmado/concluÃ­do.
+    - Deve ser idempotente (nÃ£o criar venda duplicada para o mesmo pedido).
+    - Para pedidos com tab (conta aberta), sÃ³ registra quando a tab for fechada.
     """
     try:
-        # 0. Idempotência: se já existe venda para este pedido, retornar.
+        # 0. IdempotÃªncia: se jÃ¡ existe venda para este pedido, retornar.
         order_id = getattr(order, "id", None)
         if not order_id:
             print("SkyPDV Integrator: Order ID not found")
@@ -2519,7 +2565,7 @@ def register_fastfood_sale_internal(db: Session, order: Any):
         if existing_sale:
             return existing_sale
 
-        # 1. Carregar restaurante do banco se não estiver carregado
+        # 1. Carregar restaurante do banco se nÃ£o estiver carregado
         restaurant_id = getattr(order, "restaurant_id", None)
         if not restaurant_id:
             print(f"SkyPDV Integrator: Restaurant ID not found for order {order_id}")
@@ -2533,11 +2579,11 @@ def register_fastfood_sale_internal(db: Session, order: Any):
             print(f"SkyPDV Integrator: Restaurant owner not found for order {order_id}")
             return None
 
-        # 2. Verificar se é pedido com tab (conta aberta) - só registrar quando tab fechar
+        # 2. Verificar se Ã© pedido com tab (conta aberta) - sÃ³ registrar quando tab fechar
         tab_id = getattr(order, "tab_id", None)
         if tab_id:
-            # Para pedidos com tab, a venda será registrada quando a tab for fechada
-            # Não registrar aqui para evitar duplicação
+            # Para pedidos com tab, a venda serÃ¡ registrada quando a tab for fechada
+            # NÃ£o registrar aqui para evitar duplicaÃ§Ã£o
             print(f"SkyPDV Integrator: Order {order_id} has tab {tab_id}, will register when tab closes")
             return None
 
@@ -2549,8 +2595,8 @@ def register_fastfood_sale_internal(db: Session, order: Any):
         # 3. Encontrar caixa aberto (se houver)
         register = get_current_register(db, terminal.id)
 
-        # 4. Preparar dados da venda - garantir que items estão carregados
-        # Se order.items não estiver carregado, fazer query
+        # 4. Preparar dados da venda - garantir que items estÃ£o carregados
+        # Se order.items nÃ£o estiver carregado, fazer query
         order_items = getattr(order, "items", None)
         if not order_items:
             from models import FastFoodOrderItem
@@ -2602,7 +2648,7 @@ def register_fastfood_sale_internal(db: Session, order: Any):
             print(f"SkyPDV Integrator: No valid items found to register for order {order_id}.")
             return None
 
-        # 4. Mapear método de pagamento
+        # 4. Mapear mÃ©todo de pagamento
         pm_raw = (getattr(order, "payment_method", None) or "").strip().lower()
         if pm_raw == "skywallet":
             pdv_payment_method = PaymentMethod.SKYWALLET
@@ -2667,9 +2713,9 @@ def register_fastfood_sale_internal(db: Session, order: Any):
             )
             db.add(sale_item)
             
-            # Atualizar Estoque (se rastreável no PDV) - Dedução do BALCÃO
+            # Atualizar Estoque (se rastreÃ¡vel no PDV) - DeduÃ§Ã£o do BALCÃƒO
             if product.track_stock:
-                # Buscar inventário especificamente do BALCAO para vendas
+                # Buscar inventÃ¡rio especificamente do BALCAO para vendas
                 inventory = db.query(PDVInventory).filter(
                     PDVInventory.product_id == product.id,
                     PDVInventory.terminal_id == terminal.id,
@@ -2677,7 +2723,7 @@ def register_fastfood_sale_internal(db: Session, order: Any):
                 ).first()
 
                 if not inventory:
-                     # Se não existe no balcao, cria com zero para registrar a saída negativa se permitido
+                     # Se nÃ£o existe no balcao, cria com zero para registrar a saÃ­da negativa se permitido
                      inventory = PDVInventory(
                          product_id=product.id, 
                          terminal_id=terminal.id, 
@@ -2704,6 +2750,7 @@ def register_fastfood_sale_internal(db: Session, order: Any):
                     created_by=restaurant.user_id
                 )
                 db.add(movement)
+                _notify_stock_critical(db, product, inventory, qty_before, qty_after)
         
         # 8. Atualizar Caixa (se existir)
         if register:
@@ -2723,7 +2770,7 @@ def register_fastfood_sale_internal(db: Session, order: Any):
         
     except Exception as e:
         print(f"Error registering FastFood sale in SkyPDV: {e}")
-        # Não propagar erro para não travar o pedido original
+        # NÃ£o propagar erro para nÃ£o travar o pedido original
         return None
 
 
@@ -2733,12 +2780,12 @@ def register_fastfood_tab_sale_internal(
     payment_method: Optional[str] = None,
 ):
     """
-    Registrar uma venda no SkyPDV quando uma Tab (conta) do FastFood é fechada.
+    Registrar uma venda no SkyPDV quando uma Tab (conta) do FastFood Ã© fechada.
 
     Regras:
     - Idempotente por tab_id (external_order_type='fastfood_tab', external_order_id=tab_id)
     - Consolida itens de TODOS os pedidos vinculados a esta tab (somando quantidades)
-    - Usa preço dos itens gravado em FastFoodOrderItem.price (preço no momento do pedido)
+    - Usa preÃ§o dos itens gravado em FastFoodOrderItem.price (preÃ§o no momento do pedido)
     """
     try:
         existing_sale = db.query(PDVSale).filter(
@@ -2760,7 +2807,7 @@ def register_fastfood_tab_sale_internal(
         if not terminal:
             raise HTTPException(status_code=404, detail="PDV terminal not found")
 
-        # Caixa aberto (se existir); para integração automática, não bloqueia se estiver fechado
+        # Caixa aberto (se existir); para integraÃ§Ã£o automÃ¡tica, nÃ£o bloqueia se estiver fechado
         register = get_current_register(db, terminal.id)
 
         # Buscar pedidos da tab
@@ -2816,7 +2863,7 @@ def register_fastfood_tab_sale_internal(
         if not sale_items:
             return None
 
-        # Mapear método de pagamento (prioriza parâmetro; fallback: tab/payment_method do último pedido)
+        # Mapear mÃ©todo de pagamento (prioriza parÃ¢metro; fallback: tab/payment_method do Ãºltimo pedido)
         pm_raw = (payment_method or getattr(orders[-1], "payment_method", None) or "").strip().lower()
         if pm_raw == "skywallet":
             pdv_payment_method = PaymentMethod.SKYWALLET
@@ -2854,7 +2901,7 @@ def register_fastfood_tab_sale_internal(
         db.commit()
         db.refresh(sale)
 
-        # Criar itens e baixar estoque PDV (se rastreável)
+        # Criar itens e baixar estoque PDV (se rastreÃ¡vel)
         for item_data in sale_items:
             product = item_data["product"]
             qty = int(item_data["quantity"])
@@ -2906,6 +2953,7 @@ def register_fastfood_tab_sale_internal(
                     created_by=restaurant.user_id
                 )
                 db.add(movement)
+                _notify_stock_critical(db, product, inventory, qty_before, qty_after)
 
         if register:
             register.total_sales += sale.total
@@ -2930,7 +2978,7 @@ def register_fastfood_tab_sale_internal(
 
 def cancel_fastfood_sale_internal(db: Session, order_id: int):
     """
-    Cancelar venda integrada quando o pedido FastFood é cancelado.
+    Cancelar venda integrada quando o pedido FastFood Ã© cancelado.
     """
     try:
         # Buscar venda pelo ID externo
@@ -3055,14 +3103,14 @@ def void_sale(db: Session, sale_id: int, terminal_id: int, user_id: int):
     return sale
 
 def get_stock_movements(db: Session, terminal_id: int, product_id: Optional[int] = None, skip: int = 0, limit: int = 100):
-    """Retorna o histórico de movimentações de stock"""
+    """Retorna o histÃ³rico de movimentaÃ§Ãµes de stock"""
     query = db.query(PDVStockMovement).filter(PDVStockMovement.terminal_id == terminal_id)
     if product_id:
         query = query.filter(PDVStockMovement.product_id == product_id)
     return query.order_by(desc(PDVStockMovement.created_at)).offset(skip).limit(limit).all()
 
 def get_inventory_report(db: Session, terminal_id: int):
-    """Gera um relatório detalhado do inventário atual"""
+    """Gera um relatÃ³rio detalhado do inventÃ¡rio atual"""
     inventory_items = db.query(PDVInventory).filter(PDVInventory.terminal_id == terminal_id).all()
     
     unique_products = set()
@@ -3102,7 +3150,7 @@ def get_inventory_report(db: Session, terminal_id: int):
     }
 
 def sync_supplier(db: Session, supplier_id: int, terminal_id: int):
-    """Força sincronização de um fornecedor externo"""
+    """ForÃ§a sincronizaÃ§Ã£o de um fornecedor externo"""
     supplier = db.query(PDVSupplier).filter(PDVSupplier.id == supplier_id, PDVSupplier.terminal_id == terminal_id).first()
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
@@ -3128,7 +3176,7 @@ def delete_product(db: Session, product_id: int, terminal_id: int):
 
 def get_categories_list(db: Session, terminal_id: int):
     """Listar categorias do terminal + categorias globais"""
-    # Categorias do próprio terminal
+    # Categorias do prÃ³prio terminal
     own_categories = db.query(PDVCategory).filter(
         PDVCategory.terminal_id == terminal_id,
         PDVCategory.is_active == True
@@ -3167,7 +3215,7 @@ def adopt_category(db: Session, category_id: int, terminal_id: int, user_id: int
     if not global_cat:
         raise HTTPException(status_code=404, detail="Global category not found")
     
-    # Criar cópia para o terminal
+    # Criar cÃ³pia para o terminal
     new_cat = PDVCategory(
         terminal_id=terminal_id,
         created_by=user_id,
@@ -3211,14 +3259,14 @@ def delete_category(db: Session, category_id: int, terminal_id: int):
 # ===================================================================
 
 def get_payment_methods_list(db: Session, terminal_id: int):
-    """Listar métodos do terminal + métodos globais"""
-    # Métodos do próprio terminal
+    """Listar mÃ©todos do terminal + mÃ©todos globais"""
+    # MÃ©todos do prÃ³prio terminal
     own_methods = db.query(PDVPaymentMethod).filter(
         PDVPaymentMethod.terminal_id == terminal_id,
         PDVPaymentMethod.is_active == True
     ).all()
     
-    # Métodos globais (compartilhados)
+    # MÃ©todos globais (compartilhados)
     global_methods = db.query(PDVPaymentMethod).filter(
         PDVPaymentMethod.is_global == True,
         PDVPaymentMethod.is_active == True
@@ -3229,7 +3277,7 @@ def get_payment_methods_list(db: Session, terminal_id: int):
     return list(all_methods.values())
 
 def create_payment_method(db: Session, method: schemas.PDVPaymentMethodCreate, terminal_id: int, user_id: int, is_global: bool = False):
-    """Criar novo método de pagamento (pessoal ou global)"""
+    """Criar novo mÃ©todo de pagamento (pessoal ou global)"""
     db_method = PDVPaymentMethod(
         terminal_id=None if is_global else terminal_id,
         created_by=user_id,
@@ -3242,7 +3290,7 @@ def create_payment_method(db: Session, method: schemas.PDVPaymentMethodCreate, t
     return db_method
 
 def adopt_payment_method(db: Session, method_id: int, terminal_id: int, user_id: int):
-    """Adotar um método de pagamento global para o terminal"""
+    """Adotar um mÃ©todo de pagamento global para o terminal"""
     global_method = db.query(PDVPaymentMethod).filter(
         PDVPaymentMethod.id == method_id,
         PDVPaymentMethod.is_global == True
@@ -3251,7 +3299,7 @@ def adopt_payment_method(db: Session, method_id: int, terminal_id: int, user_id:
     if not global_method:
         raise HTTPException(status_code=404, detail="Global payment method not found")
     
-    # Criar cópia para o terminal
+    # Criar cÃ³pia para o terminal
     new_method = PDVPaymentMethod(
         terminal_id=terminal_id,
         created_by=user_id,
@@ -3266,7 +3314,7 @@ def adopt_payment_method(db: Session, method_id: int, terminal_id: int, user_id:
     return new_method
 
 def update_payment_method(db: Session, method_id: int, updates: schemas.PDVPaymentMethodUpdate, terminal_id: int):
-    """Atualizar método de pagamento"""
+    """Atualizar mÃ©todo de pagamento"""
     method = db.query(PDVPaymentMethod).filter(PDVPaymentMethod.id == method_id, PDVPaymentMethod.terminal_id == terminal_id).first()
     if not method:
         raise HTTPException(status_code=404, detail="Payment method not found")
@@ -3280,7 +3328,7 @@ def update_payment_method(db: Session, method_id: int, updates: schemas.PDVPayme
     return method
 
 def delete_payment_method(db: Session, method_id: int, terminal_id: int):
-    """Desativar método de pagamento"""
+    """Desativar mÃ©todo de pagamento"""
     method = db.query(PDVPaymentMethod).filter(PDVPaymentMethod.id == method_id, PDVPaymentMethod.terminal_id == terminal_id).first()
     if not method:
         raise HTTPException(status_code=404, detail="Payment method not found")
@@ -3303,12 +3351,12 @@ def get_expense_categories_list(db: Session, terminal_id: int):
         owner_id = terminal.user_id if terminal else None
         default_expense_categories = [
             {"name": "Renda da Loja", "code": "aluguel", "icon": "store", "color": "#ef4444"},
-            {"name": "Salário", "code": "salario", "icon": "users", "color": "#f59e0b"},
+            {"name": "SalÃ¡rio", "code": "salario", "icon": "users", "color": "#f59e0b"},
             {"name": "Internet", "code": "internet", "icon": "wifi", "color": "#3b82f6"},
-            {"name": "Combustível", "code": "combustivel", "icon": "truck", "color": "#10b981"},
+            {"name": "CombustÃ­vel", "code": "combustivel", "icon": "truck", "color": "#10b981"},
             {"name": "Fornecedor", "code": "fornecedor", "icon": "package", "color": "#8b5cf6"},
             {"name": "Energia", "code": "energia", "icon": "bolt", "color": "#06b6d4"},
-            {"name": "Água", "code": "agua", "icon": "droplet", "color": "#0ea5e9"},
+            {"name": "Ãgua", "code": "agua", "icon": "droplet", "color": "#0ea5e9"},
             {"name": "Outras Despesas", "code": "outros", "icon": "receipt", "color": "#64748b"},
         ]
         for item in default_expense_categories:
@@ -3617,8 +3665,8 @@ def update_tax_summary(db: Session, terminal_id: int, year: int, month: int, use
 
 def create_invoice(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int, user_id: int):
     """
-    Cria uma fatura pendente (ou paga, se amount_paid >= total). Não exige caixa aberto;
-    se houver um caixa aberto para o usuário, ele é associado.
+    Cria uma fatura pendente (ou paga, se amount_paid >= total). NÃ£o exige caixa aberto;
+    se houver um caixa aberto para o usuÃ¡rio, ele Ã© associado.
     """
     terminal = get_terminal_required(db, user_id)
     require_terminal_permission(db, terminal.id, user_id, "can_sell")
@@ -3732,6 +3780,7 @@ def create_invoice(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: i
                 created_by=user_id
             )
             db.add(movement)
+            _notify_stock_critical(db, product, inventory, qty_before, qty_after)
 
     db.commit()
     db.refresh(sale)
@@ -3779,7 +3828,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         elements.append(Paragraph(f"Tel: {terminal.phone}", styles["Normal"]))
     elements.append(Spacer(1, 12))
 
-    elements.append(Paragraph(f"Fatura Nº {sale.id}", styles["Heading2"]))
+    elements.append(Paragraph(f"Fatura NÂº {sale.id}", styles["Heading2"]))
     elements.append(Paragraph(f"Data: {sale.created_at.strftime('%d/%m/%Y %H:%M')}", styles["Normal"]))
     status_label = "Pago" if sale.payment_status == "paid" else "Pendente"
     elements.append(Paragraph(f"Estado: {status_label}", styles["Normal"]))
@@ -3792,7 +3841,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     elements.append(Paragraph(f"Telefone: {customer_phone}", styles["Normal"]))
     elements.append(Spacer(1, 12))
 
-    table_data = [["Item", "Qtd", "Preço Unit.", "Desconto", "Total"]]
+    table_data = [["Item", "Qtd", "PreÃ§o Unit.", "Desconto", "Total"]]
     for item in items:
         table_data.append([
             item.product_name,
@@ -3845,3 +3894,4 @@ async def upload_pdv_product_image(file: UploadFile) -> str:
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(e)}")
+
