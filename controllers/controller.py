@@ -26,7 +26,7 @@ FastFoodOrder = None
 FastFoodOrderItem = None
 
 PRIMARY_STOCK_LOCATION = "balcao"
-CATEGORY_DEFAULT_STOCK_LOCATION = "armazem"
+CATEGORY_DEFAULT_STOCK_LOCATION = "balcao"
 CASH_REGISTER_MAX_DURATION = timedelta(hours=24)
 
 # ===================================================================
@@ -896,6 +896,7 @@ def adopt_shared_product(
     price: Optional[Decimal] = None,
     cost_price: Optional[Decimal] = None,
     initial_stock: Optional[Decimal] = None,
+    initial_stock_location: str = StorageLocationEnum.BALCAO.value,
 ):
     source_product = db.query(PDVProduct).filter(
         PDVProduct.id == source_product_id,
@@ -942,7 +943,7 @@ def adopt_shared_product(
             min_quantity=Decimal("0.00"),
             max_quantity=None,
             reserved_quantity=Decimal("0.00"),
-            storage_location=CATEGORY_DEFAULT_STOCK_LOCATION,
+            storage_location=initial_stock_location or CATEGORY_DEFAULT_STOCK_LOCATION,
         )
         db.add(inventory)
         db.commit()
@@ -994,6 +995,12 @@ def create_product(db: Session, product: schemas.PDVProductCreate, terminal_id: 
     if initial_qty < 0:
         raise HTTPException(status_code=400, detail="Initial stock cannot be negative")
     
+    initial_location = (
+        product.initial_stock_location.value
+        if getattr(product, "initial_stock_location", None) is not None
+        else CATEGORY_DEFAULT_STOCK_LOCATION
+    )
+
     if db_product.track_stock:
         inventory = PDVInventory(
             product_id=db_product.id,
@@ -1002,7 +1009,7 @@ def create_product(db: Session, product: schemas.PDVProductCreate, terminal_id: 
             min_quantity=Decimal("0.00"),
             max_quantity=None,
             reserved_quantity=Decimal("0.00"),
-            storage_location=CATEGORY_DEFAULT_STOCK_LOCATION
+            storage_location=initial_location
         )
         db.add(inventory)
         db.commit()

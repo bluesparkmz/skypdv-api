@@ -267,6 +267,7 @@ class PDVProductCreate(PDVProductBase):
     """Schema for creating a PDV Product"""
     supplier_id: Optional[int] = None
     initial_stock: Optional[Decimal] = None  # Estoque inicial
+    initial_stock_location: StorageLocationEnum = StorageLocationEnum.BALCAO
 
 
 class PDVProductUpdate(BaseModel):
