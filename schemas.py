@@ -535,6 +535,7 @@ class PDVSaleCreate(BaseModel):
     customer_phone: Optional[str] = None
     payment_method: PaymentMethodEnum
     amount_paid: Optional[Decimal] = None
+    change_status: Optional[str] = None
     discount_amount: Decimal = Decimal("0.00")
     discount_percent: Decimal = Decimal("0.00")
     sale_type: SaleTypeEnum = SaleTypeEnum.LOCAL
@@ -632,11 +633,13 @@ class PDVAccountUpdate(BaseModel):
     client_name: Optional[str] = None
     client_phone: Optional[str] = None
     notes: Optional[str] = None
+    change_status: Optional[str] = None
 
 
 class PDVAccountClose(BaseModel):
     payment_method: PaymentMethodEnum
     amount_paid: Decimal
+    change_status: str = "not_given"
 
 
 class PDVAccount(BaseModel):
@@ -649,6 +652,7 @@ class PDVAccount(BaseModel):
     current_balance: Decimal
     amount_paid: Decimal
     change_amount: Decimal
+    change_status: str
     opened_by_user_id: Optional[int] = None
     opened_by_name: Optional[str] = None
     closed_by_user_id: Optional[int] = None

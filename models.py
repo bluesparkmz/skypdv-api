@@ -333,6 +333,7 @@ class PDVAccount(Base):
     current_balance = Column(DECIMAL(14, 2), default=0.00)
     amount_paid = Column(DECIMAL(14, 2), default=0.00)
     change_amount = Column(DECIMAL(14, 2), default=0.00)
+    change_status = Column(String(20), default="not_given")
     opened_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     opened_by_name = Column(String(255), nullable=True)
     closed_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

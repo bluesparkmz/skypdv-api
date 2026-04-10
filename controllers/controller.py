@@ -1854,7 +1854,54 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
     db.add(sale)
     db.commit()
     db.refresh(sale)
-    
+
+    # Se troco nao foi entregue, criar uma conta fechada para registrar o troco
+    change_status = (sale_data.change_status or "given").strip().lower()
+    if change_status not in ("given", "not_given"):
+        raise HTTPException(status_code=400, detail="Invalid change status")
+    if change_status == "not_given" and effective_amount_paid > total:
+        display_name = _get_user_display_name(db, user_id)
+        account = PDVAccount(
+            terminal_id=terminal_id,
+            linked_sale_id=sale.id,
+            client_name=sale.customer_name or "Venda direta",
+            client_phone=sale.customer_phone,
+            status="closed",
+            current_balance=total,
+            amount_paid=effective_amount_paid,
+            change_amount=(effective_amount_paid - total),
+            change_status=change_status,
+            opened_by_user_id=user_id,
+            opened_by_name=display_name,
+            closed_by_user_id=user_id,
+            closed_by_name=display_name,
+            closed_at=datetime.utcnow(),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(account)
+        db.commit()
+        db.refresh(account)
+        # Itens da conta (espelha os itens da venda)
+        for item_obj in items_to_add:
+            product = item_obj["product"]
+            data = item_obj["data"]
+            unit_price = item_obj["unit_price"]
+            subtotal = item_obj["item_subtotal"]
+            account_item = PDVAccountItem(
+                account_id=account.id,
+                product_id=product.id,
+                product_name=product.name,
+                quantity=data.quantity,
+                unit_price=unit_price,
+                subtotal=subtotal,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+            db.add(account_item)
+        db.commit()
+        db.refresh(account)
+
     # 6. Criar Itens e Atualizar Estoque
     for item_obj in items_to_add:
         product = item_obj["product"]
@@ -3926,6 +3973,7 @@ def _account_to_dict(account: PDVAccount) -> dict:
         "current_balance": account.current_balance,
         "amount_paid": account.amount_paid,
         "change_amount": account.change_amount,
+        "change_status": account.change_status,
         "opened_by_user_id": account.opened_by_user_id,
         "opened_by_name": account.opened_by_name,
         "closed_by_user_id": account.closed_by_user_id,
@@ -4063,7 +4111,13 @@ def update_account(db: Session, account_id: int, data: schemas.PDVAccountUpdate,
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    updates = data.model_dump(exclude_unset=True)
+    if "change_status" in updates:
+        status_value = (updates.get("change_status") or "").strip().lower()
+        if status_value not in ("given", "not_given"):
+            raise HTTPException(status_code=400, detail="Invalid change status")
+        updates["change_status"] = status_value
+    for field, value in updates.items():
         setattr(account, field, value)
     account.updated_at = datetime.utcnow()
     db.add(account)
@@ -4108,6 +4162,9 @@ def close_account(db: Session, account_id: int, data: schemas.PDVAccountClose, u
     if amount_paid < account.current_balance:
         raise HTTPException(status_code=400, detail="Amount paid cannot be lower than total")
     change_amount = amount_paid - account.current_balance
+    change_status = (data.change_status or "not_given").strip().lower()
+    if change_status not in ("given", "not_given"):
+        raise HTTPException(status_code=400, detail="Invalid change status")
 
     sale_items = [
         schemas.PDVSaleItemCreate(
@@ -4137,6 +4194,7 @@ def close_account(db: Session, account_id: int, data: schemas.PDVAccountClose, u
     account.status = "closed"
     account.amount_paid = amount_paid
     account.change_amount = change_amount
+    account.change_status = change_status
     account.closed_by_user_id = user_id
     account.closed_by_name = _get_user_display_name(db, user_id)
     account.closed_at = datetime.utcnow()
