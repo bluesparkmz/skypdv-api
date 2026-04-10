@@ -3,9 +3,10 @@ import threading
 import time
 
 import os
-from fastapi import Depends, FastAPI, Request, HTTPException
+from fastapi import Depends, FastAPI, Request, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from auth import get_current_user
 from database import Base, engine, get_db, SessionLocal
@@ -151,6 +152,72 @@ def update_phone(
 
 
 app.include_router(sky_pdv_router)
+
+# Legacy accounts routes without /skypdv prefix (frontend fallback)
+@app.get("/accounts", response_model=List[schemas.PDVAccount])
+def list_accounts_root(
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.get_accounts(db, current_user.id, status)
+
+
+@app.post("/accounts", response_model=schemas.PDVAccount)
+def create_account_root(
+    data: schemas.PDVAccountCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.create_account(db, data, current_user.id)
+
+
+@app.get("/accounts/{account_id}", response_model=schemas.PDVAccount)
+def get_account_root(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.get_account(db, account_id, current_user.id)
+
+
+@app.put("/accounts/{account_id}", response_model=schemas.PDVAccount)
+def update_account_root(
+    account_id: int,
+    data: schemas.PDVAccountUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.update_account(db, account_id, data, current_user.id)
+
+
+@app.post("/accounts/{account_id}/items", response_model=schemas.PDVAccount)
+def add_items_root(
+    account_id: int,
+    items: List[schemas.PDVAccountItemCreate],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.add_items_to_account(db, account_id, items, current_user.id)
+
+
+@app.post("/accounts/{account_id}/close", response_model=schemas.PDVAccount)
+def close_account_root(
+    account_id: int,
+    data: schemas.PDVAccountClose,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.close_account(db, account_id, data, current_user.id)
+
+
+@app.delete("/accounts/{account_id}")
+def delete_account_root(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.delete_account(db, account_id, current_user.id)
 
 # FastFood compatibility routes without /skypdv prefix (frontend legacy)
 def _get_or_create_fastfood_restaurant(db: Session, current_user: User) -> FastFoodRestaurant:
