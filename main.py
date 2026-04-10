@@ -6,7 +6,7 @@ import os
 from fastapi import Depends, FastAPI, Request, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 
 from auth import get_current_user
 from database import Base, engine, get_db, SessionLocal
