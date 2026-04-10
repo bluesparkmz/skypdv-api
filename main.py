@@ -6,6 +6,7 @@ import os
 from fastapi import Depends, FastAPI, Request, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import inspect, text
 from typing import Optional, List
 
 from auth import get_current_user
@@ -44,6 +45,38 @@ app = FastAPI(
 _cash_register_worker_started = False
 
 
+def _ensure_account_columns():
+    try:
+        with engine.begin() as conn:
+            inspector = inspect(conn)
+            if "pdv_accounts" not in inspector.get_table_names():
+                return
+            existing = {col["name"] for col in inspector.get_columns("pdv_accounts")}
+            if "amount_paid" not in existing:
+                conn.execute(
+                    text(
+                        "ALTER TABLE pdv_accounts "
+                        "ADD COLUMN amount_paid NUMERIC(14,2) NOT NULL DEFAULT 0.00"
+                    )
+                )
+            if "change_amount" not in existing:
+                conn.execute(
+                    text(
+                        "ALTER TABLE pdv_accounts "
+                        "ADD COLUMN change_amount NUMERIC(14,2) NOT NULL DEFAULT 0.00"
+                    )
+                )
+            if "change_status" not in existing:
+                conn.execute(
+                    text(
+                        "ALTER TABLE pdv_accounts "
+                        "ADD COLUMN change_status VARCHAR(20) NOT NULL DEFAULT 'not_given'"
+                    )
+                )
+    except Exception as exc:
+        print(f"Account columns migration error: {exc}")
+
+
 def _cash_register_expiry_worker():
     while True:
         db = SessionLocal()
@@ -72,6 +105,7 @@ def start_cash_register_expiry_worker():
     global _cash_register_worker_started
     if _cash_register_worker_started:
         return
+    _ensure_account_columns()
     db = SessionLocal()
     try:
         controller.ensure_monthly_tax_records(db)
