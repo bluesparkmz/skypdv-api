@@ -1658,3 +1658,73 @@ def list_my_restaurants(
     current_user: User = Depends(get_current_user),
 ):
     return []
+
+
+# ===================================================================
+# Accounts (Contas)
+# ===================================================================
+
+@router.get("/accounts", response_model=List[schemas.PDVAccount])
+def list_accounts(
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.get_accounts(db, current_user.id, status)
+
+
+@router.post("/accounts", response_model=schemas.PDVAccount)
+def create_account(
+    data: schemas.PDVAccountCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.create_account(db, data, current_user.id)
+
+
+@router.get("/accounts/{account_id}", response_model=schemas.PDVAccount)
+def get_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.get_account(db, account_id, current_user.id)
+
+
+@router.put("/accounts/{account_id}", response_model=schemas.PDVAccount)
+def update_account(
+    account_id: int,
+    data: schemas.PDVAccountUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.update_account(db, account_id, data, current_user.id)
+
+
+@router.post("/accounts/{account_id}/items", response_model=schemas.PDVAccount)
+def add_account_items(
+    account_id: int,
+    items: List[schemas.PDVAccountItemCreate],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.add_items_to_account(db, account_id, items, current_user.id)
+
+
+@router.post("/accounts/{account_id}/close", response_model=schemas.PDVAccount)
+def close_account(
+    account_id: int,
+    data: schemas.PDVAccountClose,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.close_account(db, account_id, data, current_user.id)
+
+
+@router.delete("/accounts/{account_id}")
+def delete_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.delete_account(db, account_id, current_user.id)
