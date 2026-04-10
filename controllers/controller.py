@@ -3924,6 +3924,8 @@ def _account_to_dict(account: PDVAccount) -> dict:
         "client_phone": account.client_phone,
         "status": account.status,
         "current_balance": account.current_balance,
+        "amount_paid": account.amount_paid,
+        "change_amount": account.change_amount,
         "opened_by_user_id": account.opened_by_user_id,
         "opened_by_name": account.opened_by_name,
         "closed_by_user_id": account.closed_by_user_id,
@@ -4102,6 +4104,11 @@ def close_account(db: Session, account_id: int, data: schemas.PDVAccountClose, u
     if payment_method_value == "pos":
         payment_method_value = "card"
 
+    amount_paid = data.amount_paid
+    if amount_paid < account.current_balance:
+        raise HTTPException(status_code=400, detail="Amount paid cannot be lower than total")
+    change_amount = amount_paid - account.current_balance
+
     sale_items = [
         schemas.PDVSaleItemCreate(
             product_id=item.product_id,
@@ -4117,7 +4124,7 @@ def close_account(db: Session, account_id: int, data: schemas.PDVAccountClose, u
             customer_name=account.client_name,
             customer_phone=account.client_phone,
             payment_method=payment_method_value,
-            amount_paid=account.current_balance,
+            amount_paid=amount_paid,
             notes=account.notes or f"Conta #{account.id}",
         ),
         terminal.id,
@@ -4128,6 +4135,8 @@ def close_account(db: Session, account_id: int, data: schemas.PDVAccountClose, u
     sale.external_order_type = "account"
     sale.notes = (sale.notes or "").strip() or f"Conta #{account.id}"
     account.status = "closed"
+    account.amount_paid = amount_paid
+    account.change_amount = change_amount
     account.closed_by_user_id = user_id
     account.closed_by_name = _get_user_display_name(db, user_id)
     account.closed_at = datetime.utcnow()

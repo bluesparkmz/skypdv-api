@@ -636,6 +636,7 @@ class PDVAccountUpdate(BaseModel):
 
 class PDVAccountClose(BaseModel):
     payment_method: PaymentMethodEnum
+    amount_paid: Decimal
 
 
 class PDVAccount(BaseModel):
@@ -646,6 +647,8 @@ class PDVAccount(BaseModel):
     client_phone: Optional[str] = None
     status: str
     current_balance: Decimal
+    amount_paid: Decimal
+    change_amount: Decimal
     opened_by_user_id: Optional[int] = None
     opened_by_name: Optional[str] = None
     closed_by_user_id: Optional[int] = None
