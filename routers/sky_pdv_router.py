@@ -1711,6 +1711,27 @@ def add_account_items(
     return controller.add_items_to_account(db, account_id, items, current_user.id)
 
 
+@router.patch("/accounts/{account_id}/items/{item_id}", response_model=schemas.PDVAccount)
+def update_account_item(
+    account_id: int,
+    item_id: int,
+    data: schemas.PDVAccountItemUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.update_account_item(db, account_id, item_id, data, current_user.id)
+
+
+@router.delete("/accounts/{account_id}/items/{item_id}", response_model=schemas.PDVAccount)
+def remove_account_item(
+    account_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.remove_account_item(db, account_id, item_id, current_user.id)
+
+
 @router.post("/accounts/{account_id}/close", response_model=schemas.PDVAccount)
 def close_account(
     account_id: int,

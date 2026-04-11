@@ -609,6 +609,10 @@ class PDVAccountItemCreate(BaseModel):
     unit_price: Optional[Decimal] = None
 
 
+class PDVAccountItemUpdate(BaseModel):
+    quantity: Decimal = Field(..., gt=0)
+
+
 class PDVAccountItem(BaseModel):
     id: int
     account_id: int

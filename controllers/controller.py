@@ -4101,6 +4101,70 @@ def add_items_to_account(db: Session, account_id: int, items: List[schemas.PDVAc
     return _account_to_dict(account)
 
 
+def update_account_item(db: Session, account_id: int, item_id: int, data: schemas.PDVAccountItemUpdate, user_id: int) -> dict:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    account = db.query(PDVAccount).filter(
+        PDVAccount.id == account_id,
+        PDVAccount.terminal_id == terminal.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.status != "open":
+        raise HTTPException(status_code=400, detail="Account is closed")
+
+    account_item = db.query(PDVAccountItem).filter(
+        PDVAccountItem.id == item_id,
+        PDVAccountItem.account_id == account.id,
+    ).first()
+    if not account_item:
+        raise HTTPException(status_code=404, detail="Account item not found")
+
+    quantity = data.quantity
+    account_item.quantity = quantity
+    account_item.subtotal = (account_item.unit_price or Decimal("0.00")) * quantity
+    account_item.updated_at = datetime.utcnow()
+    db.add(account_item)
+
+    _recalculate_account_balance(account)
+    account.updated_at = datetime.utcnow()
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _account_to_dict(account)
+
+
+def remove_account_item(db: Session, account_id: int, item_id: int, user_id: int) -> dict:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    account = db.query(PDVAccount).filter(
+        PDVAccount.id == account_id,
+        PDVAccount.terminal_id == terminal.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.status != "open":
+        raise HTTPException(status_code=400, detail="Account is closed")
+
+    account_item = db.query(PDVAccountItem).filter(
+        PDVAccountItem.id == item_id,
+        PDVAccountItem.account_id == account.id,
+    ).first()
+    if not account_item:
+        raise HTTPException(status_code=404, detail="Account item not found")
+
+    db.delete(account_item)
+    db.commit()
+
+    db.refresh(account)
+    _recalculate_account_balance(account)
+    account.updated_at = datetime.utcnow()
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _account_to_dict(account)
+
+
 def update_account(db: Session, account_id: int, data: schemas.PDVAccountUpdate, user_id: int) -> dict:
     terminal = get_terminal_required(db, user_id)
     require_terminal_permission(db, terminal.id, user_id, "can_sell")
