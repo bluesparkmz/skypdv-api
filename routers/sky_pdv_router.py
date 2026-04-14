@@ -842,6 +842,33 @@ def get_sales_report_pdf(
         ["Misto", _fmt_2(mixed_total)],
         ["Total pagamentos", _fmt_2(cash_total + card_total + skywallet_total + mpesa_total + mixed_total)],
     ]
+    def _has_value(v) -> bool:
+        try:
+            return float(v) != 0.0
+        except Exception:
+            return bool(v)
+
+    payment_rows = [
+        ("Cash", cash_total),
+        ("M-pesa", mpesa_total),
+        ("E-Mola", skywallet_total),
+        ("BCI POS", card_total),
+        ("Misto", mixed_total),
+    ]
+    visible_rows = [(name, total) for name, total in payment_rows if _has_value(total)]
+    payments_table_data = [["MÃ©todo", "Total"]]
+    if not visible_rows:
+        payments_table_data.append(["Sem pagamentos", _fmt_2(0)])
+    else:
+        for name, total in visible_rows:
+            payments_table_data.append([name, _fmt_2(total)])
+    payments_table_data.append(
+        [
+            "Total pagamentos",
+            _fmt_2(cash_total + card_total + skywallet_total + mpesa_total + mixed_total),
+        ]
+    )
+
     payments_table = Table(payments_table_data, colWidths=[170, 340])
     payments_table.setStyle(
         TableStyle(
@@ -1100,6 +1127,41 @@ def get_sales_report_excel(
     ]
 
     ws.append(["Métrica", "Valor"])
+    def _has_value(v) -> bool:
+        try:
+            return float(v) != 0.0
+        except Exception:
+            return bool(v)
+
+    payment_row_names = {
+        "Vendas Cash",
+        "Vendas M-pesa",
+        "Vendas E-Mola",
+        "Vendas BCI POS",
+        "Vendas Misto",
+    }
+    payment_rows = [
+        ("Vendas Cash", cash_total),
+        ("Vendas M-pesa", mpesa_total),
+        ("Vendas E-Mola", skywallet_total),
+        ("Vendas BCI POS", card_total),
+        ("Vendas Misto", mixed_total),
+    ]
+    visible_payments = [(name, total) for name, total in payment_rows if _has_value(total)]
+    cleaned_rows = []
+    for name, value in rows:
+        if name in payment_row_names:
+            continue
+        if name == "Total pagamentos":
+            if not visible_payments:
+                cleaned_rows.append(("Sem pagamentos", 0))
+            else:
+                cleaned_rows.extend(visible_payments)
+            cleaned_rows.append((name, value))
+            continue
+        cleaned_rows.append((name, value))
+    rows = cleaned_rows
+
     for name, value in rows:
         ws.append([name, value])
 
