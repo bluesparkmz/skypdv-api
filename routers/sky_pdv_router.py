@@ -827,7 +827,7 @@ def get_sales_report_pdf(
     story.append(summary_table)
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Pagamentos por Método", styles["Heading3"]))
+    story.append(Paragraph("Pagamentos por Metodo", styles["Heading3"]))
     cash_total = summary.get("cash_sales") or 0
     card_total = summary.get("card_sales") or 0
     skywallet_total = summary.get("skywallet_sales") or 0
@@ -856,7 +856,7 @@ def get_sales_report_pdf(
         ("Misto", mixed_total),
     ]
     visible_rows = [(name, total) for name, total in payment_rows if _has_value(total)]
-    payments_table_data = [["MÃ©todo", "Total"]]
+    payments_table_data = [["Metodo", "Total"]]
     if not visible_rows:
         payments_table_data.append(["Sem pagamentos", _fmt_2(0)])
     else:
