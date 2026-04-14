@@ -8,7 +8,7 @@ import io
 
 from database import get_db
 from auth import get_current_user
-from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem
+from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct
 import schemas
 from controllers import controller
 import openpyxl
@@ -827,14 +827,20 @@ def get_sales_report_pdf(
     story.append(summary_table)
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Breakdown de Pagamentos", styles["Heading3"]))
+    story.append(Paragraph("Pagamentos por Método", styles["Heading3"]))
+    cash_total = summary.get("cash_sales") or 0
+    card_total = summary.get("card_sales") or 0
+    skywallet_total = summary.get("skywallet_sales") or 0
+    mpesa_total = summary.get("mpesa_sales") or 0
+    mixed_total = summary.get("mixed_sales") or 0
     payments_table_data = [
-        ["Método", "Valor"],
-        ["Dinheiro", _fmt_2(summary.get("cash_sales"))],
-        ["Cartão", _fmt_2(summary.get("card_sales"))],
-        ["SkyWallet", _fmt_2(summary.get("skywallet_sales"))],
-        ["M-Pesa", _fmt_2(summary.get("mpesa_sales"))],
-        ["Misto", _fmt_2(summary.get("mixed_sales"))],
+        ["Método", "Total"],
+        ["Cash", _fmt_2(cash_total)],
+        ["M-pesa", _fmt_2(mpesa_total)],
+        ["E-Mola", _fmt_2(skywallet_total)],
+        ["BCI POS", _fmt_2(card_total)],
+        ["Misto", _fmt_2(mixed_total)],
+        ["Total pagamentos", _fmt_2(cash_total + card_total + skywallet_total + mpesa_total + mixed_total)],
     ]
     payments_table = Table(payments_table_data, colWidths=[170, 340])
     payments_table.setStyle(
@@ -877,7 +883,7 @@ def get_sales_report_pdf(
     story.append(items_table)
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Resumo de Estoque", styles["Heading3"]))
+    story.append(Paragraph("Movimento de Produtos (Entradas e Saídas)", styles["Heading3"]))
     movements = (
         db.query(PDVStockMovement.movement_type, func.sum(PDVStockMovement.quantity))
         .filter(PDVStockMovement.terminal_id == terminal.id)
@@ -889,12 +895,16 @@ def get_sales_report_pdf(
     move_sums = {mt: (qty or 0) for mt, qty in movements}
     entries = (move_sums.get(MovementType.IN, 0) or 0) + (move_sums.get(MovementType.RETURN, 0) or 0)
     exits = abs(move_sums.get(MovementType.OUT, 0) or 0) + abs(move_sums.get(MovementType.SALE, 0) or 0)
+    transfers = move_sums.get(MovementType.TRANSFER, 0) or 0
+    adjustments = move_sums.get(MovementType.ADJUSTMENT, 0) or 0
+    total_movements = entries + exits + abs(transfers) + abs(adjustments)
     stock_table_data = [
         ["Tipo", "Quantidade"],
         ["Entradas (IN/RETURN)", _fmt_int(entries)],
         ["Saídas (OUT/SALE)", _fmt_int(exits)],
-        ["Transferências", _fmt_int(move_sums.get(MovementType.TRANSFER, 0) or 0)],
-        ["Ajustes", _fmt_int(move_sums.get(MovementType.ADJUSTMENT, 0) or 0)],
+        ["Transferências", _fmt_int(transfers)],
+        ["Ajustes", _fmt_int(adjustments)],
+        ["Total movimentado", _fmt_int(total_movements)],
     ]
     stock_table = Table(stock_table_data, colWidths=[240, 270])
     stock_table.setStyle(
@@ -908,6 +918,69 @@ def get_sales_report_pdf(
         )
     )
     story.append(stock_table)
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("Movimentos por Produto", styles["Heading3"]))
+    product_movements = (
+        db.query(
+            PDVProduct.name,
+            PDVStockMovement.movement_type,
+            func.sum(PDVStockMovement.quantity),
+        )
+        .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
+        .filter(PDVStockMovement.terminal_id == terminal.id)
+        .filter(PDVStockMovement.created_at >= start_date)
+        .filter(PDVStockMovement.created_at <= end_date)
+        .group_by(PDVProduct.name, PDVStockMovement.movement_type)
+        .all()
+    )
+    per_product = {}
+    for name, movement_type, qty in product_movements:
+        entry = per_product.setdefault(
+            name or "Sem nome",
+            {"entries": 0, "exits": 0, "transfers": 0, "adjustments": 0},
+        )
+        amount = float(qty or 0)
+        if movement_type in (MovementType.IN, MovementType.RETURN):
+            entry["entries"] += amount
+        elif movement_type in (MovementType.OUT, MovementType.SALE):
+            entry["exits"] += abs(amount)
+        elif movement_type == MovementType.TRANSFER:
+            entry["transfers"] += abs(amount)
+        elif movement_type == MovementType.ADJUSTMENT:
+            entry["adjustments"] += abs(amount)
+
+    if per_product:
+        rows = [["Produto", "Entradas", "Saídas", "Total mov."]]
+        items = []
+        for name, data in per_product.items():
+            total = data["entries"] + data["exits"] + data["transfers"] + data["adjustments"]
+            items.append((name, data["entries"], data["exits"], total))
+        items.sort(key=lambda x: x[3], reverse=True)
+        for name, entries_val, exits_val, total_val in items[:50]:
+            rows.append(
+                [
+                    str(name),
+                    _fmt_int(entries_val),
+                    _fmt_int(exits_val),
+                    _fmt_int(total_val),
+                ]
+            )
+        product_table = Table(rows, colWidths=[240, 70, 70, 70])
+        product_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ]
+            )
+        )
+        story.append(product_table)
+    else:
+        story.append(Paragraph("Nenhum movimento de produto no período.", styles["Normal"]))
 
     doc.build(story)
     pdf_bytes = buffer.getvalue()
@@ -958,6 +1031,13 @@ def get_sales_report_excel(
     ws = wb.active
     ws.title = "Resumo de Vendas"
 
+    cash_total = summary.get("cash_sales") or 0
+    card_total = summary.get("card_sales") or 0
+    skywallet_total = summary.get("skywallet_sales") or 0
+    mpesa_total = summary.get("mpesa_sales") or 0
+    mixed_total = summary.get("mixed_sales") or 0
+    total_payments = cash_total + card_total + skywallet_total + mpesa_total + mixed_total
+
     rows = [
         ("Período Início", start_date.strftime("%d/%m/%Y %H:%M")),
         ("Período Fim", end_date.strftime("%d/%m/%Y %H:%M")),
@@ -969,10 +1049,12 @@ def get_sales_report_excel(
         ("Itens Vendidos", summary["total_items_sold"]),
         ("Descontos", summary["total_discounts"]),
         ("Impostos", summary["total_taxes"]),
-        ("Vendas Dinheiro", summary["cash_sales"]),
-        ("Vendas Cartão", summary["card_sales"]),
-        ("Vendas Skywallet", summary["skywallet_sales"]),
-        ("Vendas Mpesa", summary["mpesa_sales"]),
+        ("Vendas Cash", cash_total),
+        ("Vendas M-pesa", mpesa_total),
+        ("Vendas E-Mola", skywallet_total),
+        ("Vendas BCI POS", card_total),
+        ("Vendas Misto", mixed_total),
+        ("Total pagamentos", total_payments),
         ("Vendas Anuladas", summary["voided_sales"]),
         ("Valor Anulado", summary["voided_amount"]),
     ]
@@ -980,6 +1062,66 @@ def get_sales_report_excel(
     ws.append(["Métrica", "Valor"])
     for name, value in rows:
         ws.append([name, value])
+
+    ws.append([])
+    ws.append(["Movimento de Produtos (Entradas e Saídas)", "Quantidade"])
+    movements = (
+        db.query(PDVStockMovement.movement_type, func.sum(PDVStockMovement.quantity))
+        .filter(PDVStockMovement.terminal_id == terminal.id)
+        .filter(PDVStockMovement.created_at >= start_date)
+        .filter(PDVStockMovement.created_at <= end_date)
+        .group_by(PDVStockMovement.movement_type)
+        .all()
+    )
+    move_sums = {mt: (qty or 0) for mt, qty in movements}
+    entries = (move_sums.get(MovementType.IN, 0) or 0) + (move_sums.get(MovementType.RETURN, 0) or 0)
+    exits = abs(move_sums.get(MovementType.OUT, 0) or 0) + abs(move_sums.get(MovementType.SALE, 0) or 0)
+    transfers = move_sums.get(MovementType.TRANSFER, 0) or 0
+    adjustments = move_sums.get(MovementType.ADJUSTMENT, 0) or 0
+    total_movements = entries + exits + abs(transfers) + abs(adjustments)
+    ws.append(["Entradas (IN/RETURN)", entries])
+    ws.append(["Saídas (OUT/SALE)", exits])
+    ws.append(["Transferências", transfers])
+    ws.append(["Ajustes", adjustments])
+    ws.append(["Total movimentado", total_movements])
+
+    ws_products = wb.create_sheet("Movimentos Produtos")
+    ws_products.append(["Produto", "Entradas", "Saídas", "Total mov."])
+    product_movements = (
+        db.query(
+            PDVProduct.name,
+            PDVStockMovement.movement_type,
+            func.sum(PDVStockMovement.quantity),
+        )
+        .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
+        .filter(PDVStockMovement.terminal_id == terminal.id)
+        .filter(PDVStockMovement.created_at >= start_date)
+        .filter(PDVStockMovement.created_at <= end_date)
+        .group_by(PDVProduct.name, PDVStockMovement.movement_type)
+        .all()
+    )
+    per_product = {}
+    for name, movement_type, qty in product_movements:
+        entry = per_product.setdefault(
+            name or "Sem nome",
+            {"entries": 0, "exits": 0, "transfers": 0, "adjustments": 0},
+        )
+        amount = float(qty or 0)
+        if movement_type in (MovementType.IN, MovementType.RETURN):
+            entry["entries"] += amount
+        elif movement_type in (MovementType.OUT, MovementType.SALE):
+            entry["exits"] += abs(amount)
+        elif movement_type == MovementType.TRANSFER:
+            entry["transfers"] += abs(amount)
+        elif movement_type == MovementType.ADJUSTMENT:
+            entry["adjustments"] += abs(amount)
+    items = []
+    for name, data in per_product.items():
+        total = data["entries"] + data["exits"] + data["transfers"] + data["adjustments"]
+        items.append((name, data["entries"], data["exits"], total))
+    items.sort(key=lambda x: x[3], reverse=True)
+    for name, entries_val, exits_val, total_val in items:
+        ws_products.append([name, entries_val, exits_val, total_val])
 
     # Auto ajuste de largura
     for col in range(1, 3):
