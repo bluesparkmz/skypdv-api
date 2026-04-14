@@ -681,7 +681,7 @@ def get_sales_report(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Gerar relatório resumido de vendas para um período livre
+    Gerar relatório resumido de vendas para um periodo livre
     - Caixas veem apenas suas próprias vendas
     - Admins veem todas as vendas do terminal
     - Se user_id for fornecido e usuário for admin, filtra por esse caixa específico
@@ -792,7 +792,7 @@ def get_sales_report_pdf(
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Relatório: Vendas (Resumo)", styles["Heading2"]))
-    story.append(Paragraph(f"Período: {period_label}", styles["Normal"]))
+    story.append(Paragraph(f"Periodo: {period_label}", styles["Normal"]))
     story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)} (Local)", styles["Normal"]))
     story.append(Spacer(1, 12))
 
@@ -910,8 +910,8 @@ def get_sales_report_pdf(
     story.append(items_table)
     story.append(Spacer(1, 12))
 
-    # Lista completa de produtos vendidos no período com estoque atual
-    story.append(Paragraph("Produtos vendidos no perÃ­odo", styles["Heading3"]))
+    # Lista completa de produtos vendidos no periodo com estoque atual
+    story.append(Paragraph("Produtos vendidos no periodo", styles["Heading3"]))
     sold_products = (
         db.query(
             PDVProduct.name,
@@ -1047,7 +1047,7 @@ def get_sales_report_pdf(
         )
         story.append(product_table)
     else:
-        story.append(Paragraph("Nenhum movimento de produto no período.", styles["Normal"]))
+        story.append(Paragraph("Nenhum movimento de produto no periodo.", styles["Normal"]))
 
     doc.build(story)
     pdf_bytes = buffer.getvalue()
@@ -1106,8 +1106,8 @@ def get_sales_report_excel(
     total_payments = cash_total + card_total + skywallet_total + mpesa_total + mixed_total
 
     rows = [
-        ("Período Início", start_date.strftime("%d/%m/%Y %H:%M")),
-        ("Período Fim", end_date.strftime("%d/%m/%Y %H:%M")),
+        ("Periodo Inicio", start_date.strftime("%d/%m/%Y %H:%M")),
+        ("Periodo Fim", end_date.strftime("%d/%m/%Y %H:%M")),
         ("Total Vendas", summary["total_sales"]),
         ("Receita Bruta", summary["total_revenue"]),
         ("Custo Total", summary["total_cost"]),
@@ -1349,7 +1349,7 @@ def get_products_report_pdf(
 
 @router.get("/reports/periodic", response_model=schemas.SalesSummary)
 def get_periodic_sales_report(
-    period: str = Query(..., description="Tipo de período: day, month, year"),
+    period: str = Query(..., description="Tipo de periodo: day, month, year"),
     date: str = Query(..., description="Data no formato AAAA-MM-DD, AAAA-MM ou AAAA"),
     user_id: Optional[int] = None,
     db: Session = Depends(get_db),
@@ -1413,7 +1413,7 @@ def get_top_products_report(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Relatório de produtos mais vendidos em um período.
+    Relatorio de produtos mais vendidos em um periodo.
     Se não informar datas, assume mês atual.
     """
     terminal = controller.get_terminal_required(db, current_user.id)
@@ -1432,7 +1432,7 @@ def get_sales_by_day(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Breakdown de vendas por dia em um período.
+    Breakdown de vendas por dia em um periodo.
     Útil para gráficos de tendência diária.
     Se não informar datas, assume mês atual.
     """
@@ -1746,7 +1746,7 @@ def get_finance_summary_pdf(
     story.append(Spacer(1, 8))
     story.append(
         Paragraph(
-            f"Período: {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}",
+            f"Periodo: {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}",
             styles["Normal"],
         )
     )
@@ -1800,7 +1800,7 @@ def get_finance_summary_pdf(
         )
         story.append(table)
     else:
-        story.append(Paragraph("Sem despesas no período.", styles["Normal"]))
+        story.append(Paragraph("Sem despesas no periodo.", styles["Normal"]))
 
     doc.build(story)
     buffer.seek(0)
@@ -1837,7 +1837,7 @@ def get_finance_summary_excel(
     ws = wb.active
     ws.title = "Resumo Financeiro"
 
-    ws.append(["Período", f"{start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"])
+    ws.append(["Periodo", f"{start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"])
     ws.append([])
     ws.append(["Métrica", "Valor"])
     ws.append(["Entradas (vendas)", summary["gross_revenue"]])
