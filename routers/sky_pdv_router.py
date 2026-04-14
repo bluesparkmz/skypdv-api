@@ -8,7 +8,7 @@ import io
 
 from database import get_db
 from auth import get_current_user
-from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct
+from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct, PDVInventory
 import schemas
 from controllers import controller
 import openpyxl
@@ -881,6 +881,46 @@ def get_sales_report_pdf(
         )
     )
     story.append(items_table)
+    story.append(Spacer(1, 12))
+
+    # Lista completa de produtos vendidos no período com estoque atual
+    story.append(Paragraph("Produtos vendidos no perÃ­odo", styles["Heading3"]))
+    sold_products = (
+        db.query(
+            PDVProduct.name,
+            func.sum(PDVSaleItem.quantity).label("qty"),
+            func.max(PDVInventory.quantity).label("stock"),
+        )
+        .join(PDVSale, PDVSale.id == PDVSaleItem.sale_id)
+        .join(PDVProduct, PDVProduct.id == PDVSaleItem.product_id)
+        .outerjoin(
+            PDVInventory,
+            (PDVInventory.product_id == PDVProduct.id) & (PDVInventory.terminal_id == terminal.id),
+        )
+        .filter(PDVSale.terminal_id == terminal.id)
+        .filter(PDVSale.created_at >= start_date)
+        .filter(PDVSale.created_at <= end_date)
+        .filter(PDVSale.status == "completed")
+        .group_by(PDVProduct.name)
+        .order_by(func.sum(PDVSaleItem.quantity).desc())
+        .all()
+    )
+    sold_table_data = [["Produto", "Qtd vendida", "Estoque atual"]]
+    for name, qty, stock in sold_products:
+        sold_table_data.append([str(name or ""), _fmt_int(qty or 0), _fmt_int(stock or 0)])
+    sold_table = Table(sold_table_data, colWidths=[260, 90, 90])
+    sold_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(sold_table)
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Movimento de Produtos (Entradas e Saídas)", styles["Heading3"]))
