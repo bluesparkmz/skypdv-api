@@ -1955,6 +1955,7 @@ def get_finance_summary_pdf(
 @router.get("/reports/stock-day.pdf")
 def get_stock_day_report_pdf(
     date: Optional[datetime] = None,
+    product_scope: str = Query("all", pattern="^(all|beverages)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -1990,6 +1991,17 @@ def get_stock_day_report_pdf(
     start_date = report_day.replace(hour=0, minute=0, second=0, microsecond=0)
     end_date = report_day.replace(hour=23, minute=59, second=59, microsecond=999999)
     issued_at = datetime.utcnow()
+    scope_label = "Apenas bebidas" if product_scope == "beverages" else "Todos os produtos"
+
+    def _is_beverage_product(product: PDVProduct) -> bool:
+        category = str(getattr(product, "category", "") or "").lower()
+        name = str(getattr(product, "name", "") or "").lower()
+        keywords = [
+            "bebida", "drink", "sumo", "suco", "agua", "água", "refrigerante",
+            "cerveja", "vinho", "whisky", "cafe", "café", "cha", "chá",
+            "milkshake", "juice", "soda",
+        ]
+        return any(k in category for k in keywords) or any(k in name for k in keywords)
 
     inventory_rows = (
         db.query(PDVInventory, PDVProduct)
@@ -2010,6 +2022,10 @@ def get_stock_day_report_pdf(
         .order_by(PDVStockMovement.created_at.desc())
         .all()
     )
+
+    if product_scope == "beverages":
+        inventory_rows = [(inv, prod) for inv, prod in inventory_rows if _is_beverage_product(prod)]
+        movement_rows = [(mov, prod) for mov, prod in movement_rows if _is_beverage_product(prod)]
 
     totals = {"entries": 0.0, "exits": 0.0, "adjustments": 0.0, "transfers": 0.0, "sales": 0.0}
     for movement, _product in movement_rows:
@@ -2034,6 +2050,7 @@ def get_stock_day_report_pdf(
     story.append(Paragraph("Relatorio: Stock do Dia", styles["Title"]))
     story.append(Paragraph(terminal.name or "SkyPDV", styles["Heading2"]))
     story.append(Paragraph(f"Data do stock: {start_date.strftime('%d/%m/%Y')}", styles["Normal"]))
+    story.append(Paragraph(f"Escopo dos produtos: {scope_label}", styles["Normal"]))
     story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)}", styles["Normal"]))
     story.append(Spacer(1, 12))
 
