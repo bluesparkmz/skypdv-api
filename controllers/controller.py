@@ -341,18 +341,29 @@ def get_terminal_users(db: Session, terminal_id: int, user_id: int) -> List[dict
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
-    
-    if terminal.user_id != user_id and not check_terminal_permission(db, terminal_id, user_id, "can_manage_users"):
-        raise HTTPException(status_code=403, detail="You don't have permission to view terminal users")
+
+    is_owner = terminal.user_id == user_id
+    terminal_user = db.query(PDVTerminalUser).filter(
+        PDVTerminalUser.terminal_id == terminal_id,
+        PDVTerminalUser.user_id == user_id,
+        PDVTerminalUser.is_active == True,
+    ).first()
+
+    if not is_owner and not terminal_user:
+        raise HTTPException(status_code=403, detail="You don't have access to this terminal")
+
+    can_manage_users = is_owner or check_terminal_permission(db, terminal_id, user_id, "can_manage_users")
     
     terminal_users = db.query(PDVTerminalUser).filter(
         PDVTerminalUser.terminal_id == terminal_id
     ).all()
-    pending_invites = db.query(PDVTerminalInvite).filter(
-        PDVTerminalInvite.terminal_id == terminal_id,
-        PDVTerminalInvite.is_active == True,
-        PDVTerminalInvite.accepted_at.is_(None),
-    ).all()
+    pending_invites = []
+    if can_manage_users:
+        pending_invites = db.query(PDVTerminalInvite).filter(
+            PDVTerminalInvite.terminal_id == terminal_id,
+            PDVTerminalInvite.is_active == True,
+            PDVTerminalInvite.accepted_at.is_(None),
+        ).all()
     
     # Converter para dict com informaÃ§Ãµes do usuÃ¡rio
     result = []
