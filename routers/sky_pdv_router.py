@@ -1913,6 +1913,181 @@ def get_finance_summary_pdf(
     return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
 
 
+@router.get("/reports/stock-day.pdf")
+def get_stock_day_report_pdf(
+    date: Optional[datetime] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from decimal import Decimal
+    from models import PDVProduct
+
+    def _fmt_dt(dt: Optional[datetime]) -> str:
+        if not dt:
+            return ""
+        return dt.strftime("%d/%m/%Y %H:%M")
+
+    def _fmt_num(v, digits: int = 3) -> str:
+        if v is None:
+            return f"{0:.{digits}f}"
+        if isinstance(v, bool):
+            return f"{1 if v else 0:.{digits}f}"
+        if isinstance(v, int):
+            return f"{v:.{digits}f}"
+        if isinstance(v, Decimal):
+            return f"{v:.{digits}f}"
+        try:
+            return f"{float(v):.{digits}f}"
+        except Exception:
+            return str(v)
+
+    report_day = date or datetime.utcnow()
+    start_date = report_day.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_date = report_day.replace(hour=23, minute=59, second=59, microsecond=999999)
+    issued_at = datetime.utcnow()
+
+    inventory_rows = (
+        db.query(PDVInventory, PDVProduct)
+        .join(PDVProduct, PDVProduct.id == PDVInventory.product_id)
+        .filter(PDVInventory.terminal_id == terminal.id)
+        .filter(PDVProduct.is_active == True)
+        .filter(PDVProduct.track_stock == True)
+        .order_by(PDVProduct.name.asc(), PDVInventory.storage_location.asc())
+        .all()
+    )
+
+    movement_rows = (
+        db.query(PDVStockMovement, PDVProduct)
+        .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
+        .filter(PDVStockMovement.terminal_id == terminal.id)
+        .filter(PDVStockMovement.created_at >= start_date)
+        .filter(PDVStockMovement.created_at <= end_date)
+        .order_by(PDVStockMovement.created_at.desc())
+        .all()
+    )
+
+    totals = {"entries": 0.0, "exits": 0.0, "adjustments": 0.0, "transfers": 0.0, "sales": 0.0}
+    for movement, _product in movement_rows:
+        qty = abs(float(movement.quantity or 0))
+        if movement.movement_type in (MovementType.IN, MovementType.RETURN):
+            totals["entries"] += qty
+        elif movement.movement_type == MovementType.SALE:
+            totals["sales"] += qty
+            totals["exits"] += qty
+        elif movement.movement_type == MovementType.OUT:
+            totals["exits"] += qty
+        elif movement.movement_type == MovementType.ADJUSTMENT:
+            totals["adjustments"] += qty
+        elif movement.movement_type == MovementType.TRANSFER:
+            totals["transfers"] += qty
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28)
+    styles = getSampleStyleSheet()
+    story = []
+
+    story.append(Paragraph("Relatorio: Stock do Dia", styles["Title"]))
+    story.append(Paragraph(terminal.name or "SkyPDV", styles["Heading2"]))
+    story.append(Paragraph(f"Data do stock: {start_date.strftime('%d/%m/%Y')}", styles["Normal"]))
+    story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)}", styles["Normal"]))
+    story.append(Spacer(1, 12))
+
+    summary_rows = [
+        ["Resumo", "Quantidade"],
+        ["Entradas", _fmt_num(totals["entries"], 0)],
+        ["Saidas", _fmt_num(totals["exits"], 0)],
+        ["Vendido", _fmt_num(totals["sales"], 0)],
+        ["Ajustes", _fmt_num(totals["adjustments"], 0)],
+        ["Transferencias", _fmt_num(totals["transfers"], 0)],
+        ["Movimentos do dia", str(len(movement_rows))],
+        ["Itens em estoque", str(len(inventory_rows))],
+    ]
+    summary_table = Table(summary_rows, colWidths=[260, 220])
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(summary_table)
+    story.append(Spacer(1, 12))
+
+    stock_rows = [["Produto", "Local", "Atual", "Min", "Reservado"]]
+    for inventory, product in inventory_rows:
+        stock_rows.append(
+            [
+                str(product.name or ""),
+                str(inventory.storage_location or "balcao"),
+                _fmt_num(inventory.quantity),
+                _fmt_num(inventory.min_quantity),
+                _fmt_num(inventory.reserved_quantity),
+            ]
+        )
+    if len(stock_rows) == 1:
+        stock_rows.append(["Sem estoque controlado", "-", "0", "0", "0"])
+
+    story.append(Paragraph("Estoque atual", styles["Heading3"]))
+    stock_table = Table(stock_rows, colWidths=[210, 90, 80, 70, 90])
+    stock_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(stock_table)
+    story.append(Spacer(1, 12))
+
+    movement_table_rows = [["Hora", "Produto", "Tipo", "Qtd", "Obs"]]
+    for movement, product in movement_rows[:80]:
+        movement_table_rows.append(
+            [
+                movement.created_at.strftime("%H:%M"),
+                str(product.name or ""),
+                str(movement.movement_type or ""),
+                _fmt_num(abs(float(movement.quantity or 0))),
+                str(movement.notes or movement.reference or ""),
+            ]
+        )
+    if len(movement_table_rows) == 1:
+        movement_table_rows.append(["-", "Sem movimentos hoje", "-", "0", "-"])
+
+    story.append(Paragraph("Movimentos do dia", styles["Heading3"]))
+    movement_table = Table(movement_table_rows, colWidths=[55, 170, 75, 55, 175])
+    movement_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(movement_table)
+
+    doc.build(story)
+    pdf_bytes = buffer.getvalue()
+    filename = f"Stock_Dia_{start_date.strftime('%Y%m%d')}.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
+
+
 @router.get("/finance/summary.xlsx")
 def get_finance_summary_excel(
     start_date: Optional[datetime] = None,
