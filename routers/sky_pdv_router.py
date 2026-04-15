@@ -1987,6 +1987,17 @@ def get_stock_day_report_pdf(
         except Exception:
             return str(v)
 
+    def _fmt_qty(v) -> str:
+        """Format quantity without forcing trailing .000 for integers."""
+        try:
+            value = float(v or 0)
+        except Exception:
+            return str(v)
+        if value.is_integer():
+            return str(int(value))
+        text = f"{value:.3f}".rstrip("0").rstrip(".")
+        return text or "0"
+
     report_day = date or datetime.utcnow()
     start_date = report_day.replace(hour=0, minute=0, second=0, microsecond=0)
     end_date = report_day.replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -2123,7 +2134,7 @@ def get_stock_day_report_pdf(
                 product_name,
                 _fmt_num(summary["entries"], 0),
                 _fmt_num(summary["exits"], 0),
-                _fmt_num(summary["current_stock"]),
+                _fmt_qty(summary["current_stock"]),
             ]
         )
         if summary["exits"] > 0:
