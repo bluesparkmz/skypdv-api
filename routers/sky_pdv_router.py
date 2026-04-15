@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import List, Optional
 from datetime import datetime
 import io
@@ -717,6 +717,7 @@ def get_sales_report_pdf(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     user_id: Optional[int] = None,
+    product_scope: str = Query("all", pattern="^(all|beverages)$"),
     phone: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -776,10 +777,36 @@ def get_sales_report_pdf(
             return str(int(float(v)))
         except Exception:
             return str(v)
+
+    beverage_filter = or_(
+        func.lower(func.coalesce(PDVProduct.category, "")).like("%bebida%"),
+        func.lower(func.coalesce(PDVProduct.category, "")).like("%drink%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%sumo%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%suco%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%agua%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%água%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%refrigerante%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%cerveja%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%vinho%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%whisky%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%cafe%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%café%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%cha%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%chá%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%milkshake%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%juice%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%soda%"),
+    )
+
+    def _apply_product_scope(query):
+        if product_scope == "beverages":
+            return query.filter(beverage_filter)
+        return query
  
     issued_at = datetime.utcnow()
     period_label = f"{_fmt_date(start_date)} até {_fmt_date(end_date)}"
  
+    scope_label = "Apenas bebidas" if product_scope == "beverages" else "Todos os produtos"
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
@@ -793,6 +820,7 @@ def get_sales_report_pdf(
 
     story.append(Paragraph("Relatório: Vendas (Resumo)", styles["Heading2"]))
     story.append(Paragraph(f"Periodo: {period_label}", styles["Normal"]))
+    story.append(Paragraph(f"Escopo dos produtos: {scope_label}", styles["Normal"]))
     story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)} (Local)", styles["Normal"]))
     story.append(Spacer(1, 12))
 
@@ -884,7 +912,37 @@ def get_sales_report_pdf(
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Produtos mais vendidos (Top 30)", styles["Heading3"]))
-    top_products = controller.get_top_products_report(db, terminal.id, start_date, end_date, limit=30, user_id=filter_user_id)
+    top_products = controller.get_top_products_report(db, terminal.id, start_date, end_date, limit=100, user_id=filter_user_id)
+    if product_scope == "beverages":
+        filtered_top_products = []
+        for p in top_products:
+            product_name = str(p.get("product_name") or "").lower()
+            if any(
+                keyword in product_name
+                for keyword in [
+                    "bebida",
+                    "drink",
+                    "sumo",
+                    "suco",
+                    "agua",
+                    "água",
+                    "refrigerante",
+                    "cerveja",
+                    "vinho",
+                    "whisky",
+                    "cafe",
+                    "café",
+                    "cha",
+                    "chá",
+                    "milkshake",
+                    "juice",
+                    "soda",
+                ]
+            ):
+                filtered_top_products.append(p)
+        top_products = filtered_top_products[:30]
+    else:
+        top_products = top_products[:30]
     items_table_data = [["Produto", "Qtd", "Receita", "Lucro"]]
     for p in top_products:
         items_table_data.append(
@@ -912,8 +970,9 @@ def get_sales_report_pdf(
 
     # Lista completa de produtos vendidos no periodo com estoque atual
     story.append(Paragraph("Produtos vendidos no periodo", styles["Heading3"]))
-    sold_products = (
+    sold_products_query = (
         db.query(
+            PDVProduct.id.label("product_id"),
             PDVProduct.name,
             func.sum(PDVSaleItem.quantity).label("qty"),
             func.max(PDVInventory.quantity).label("stock"),
@@ -928,14 +987,53 @@ def get_sales_report_pdf(
         .filter(PDVSale.created_at >= start_date)
         .filter(PDVSale.created_at <= end_date)
         .filter(PDVSale.status == "completed")
-        .group_by(PDVProduct.name)
+    )
+    if filter_user_id:
+        sold_products_query = sold_products_query.filter(PDVSale.created_by == filter_user_id)
+    sold_products = (
+        _apply_product_scope(sold_products_query)
+        .group_by(PDVProduct.id, PDVProduct.name)
         .order_by(func.sum(PDVSaleItem.quantity).desc())
         .all()
     )
-    sold_table_data = [["Produto", "Qtd vendida", "Estoque atual"]]
-    for name, qty, stock in sold_products:
-        sold_table_data.append([str(name or ""), _fmt_int(qty or 0), _fmt_int(stock or 0)])
-    sold_table = Table(sold_table_data, colWidths=[260, 90, 90])
+    product_movements = (
+        _apply_product_scope(
+            db.query(
+                PDVProduct.id.label("product_id"),
+                PDVStockMovement.movement_type,
+                func.sum(PDVStockMovement.quantity).label("quantity"),
+            )
+            .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
+            .filter(PDVStockMovement.terminal_id == terminal.id)
+            .filter(PDVStockMovement.created_at >= start_date)
+            .filter(PDVStockMovement.created_at <= end_date)
+            .group_by(PDVProduct.id, PDVStockMovement.movement_type)
+        )
+        .all()
+    )
+    movement_by_product = {}
+    for movement in product_movements:
+        stats = movement_by_product.setdefault(movement.product_id, {"entries": 0, "exits": 0})
+        amount = float(movement.quantity or 0)
+        if movement.movement_type in (MovementType.IN, MovementType.RETURN):
+            stats["entries"] += amount
+        elif movement.movement_type in (MovementType.OUT, MovementType.SALE):
+            stats["exits"] += abs(amount)
+    sold_table_data = [["Produto", "Qtd vendida", "Entradas", "Saidas", "Estoque atual"]]
+    for product in sold_products:
+        movement_stats = movement_by_product.get(product.product_id, {"entries": 0, "exits": 0})
+        sold_table_data.append(
+            [
+                str(product.name or ""),
+                _fmt_int(product.qty or 0),
+                _fmt_int(movement_stats["entries"]),
+                _fmt_int(movement_stats["exits"]),
+                _fmt_int(product.stock or 0),
+            ]
+        )
+    if len(sold_table_data) == 1:
+        sold_table_data.append(["Sem produtos vendidos", "0", "0", "0", "0"])
+    sold_table = Table(sold_table_data, colWidths=[220, 75, 70, 70, 75])
     sold_table.setStyle(
         TableStyle(
             [
