@@ -1285,6 +1285,8 @@ def get_sales_report_excel(
     ws.append(["Ajustes", adjustments])
     ws.append(["Total movimentado", total_movements])
 
+    from openpyxl.styles import PatternFill, Font
+
     ws_products = wb.create_sheet("Movimentos Produtos")
     ws_products.append(["Produto", "Entradas", "Saidas", "Estoque atual"])
     product_movements = (
@@ -1331,7 +1333,18 @@ def get_sales_report_excel(
     for name, data in per_product.items():
         total = data["entries"] + data["exits"] + data["transfers"] + data["adjustments"]
         items.append((name, data["entries"], data["exits"], total))
-    items.sort(key=lambda x: x[3], reverse=True)
+    # Produtos vendidos (saídas > 0) aparecem primeiro.
+    items.sort(
+        key=lambda x: (
+            0 if x[2] > 0 else 1,
+            -x[2],
+            str(x[0]).lower(),
+        )
+    )
+
+    sold_fill = PatternFill(fill_type="solid", fgColor="E8F5E9")
+    sold_font = Font(color="1B5E20")
+
     for name, entries_val, exits_val, _total_val in items:
         current_stock = 0.0
         for row in (
@@ -1342,6 +1355,12 @@ def get_sales_report_excel(
         ):
             current_stock += product_current_stock.get(row.id, 0.0)
         ws_products.append([name, entries_val, exits_val, current_stock])
+        if float(exits_val or 0) > 0:
+            current_row = ws_products.max_row
+            for col in range(1, 5):
+                cell = ws_products.cell(row=current_row, column=col)
+                cell.fill = sold_fill
+                cell.font = sold_font
 
     # Auto ajuste de largura
     for col in range(1, 3):
