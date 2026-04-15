@@ -1286,7 +1286,7 @@ def get_sales_report_excel(
     ws.append(["Total movimentado", total_movements])
 
     ws_products = wb.create_sheet("Movimentos Produtos")
-    ws_products.append(["Produto", "Entradas", "Saídas", "Total mov."])
+    ws_products.append(["Produto", "Entradas", "Saidas", "Estoque atual"])
     product_movements = (
         db.query(
             PDVProduct.name,
@@ -1315,13 +1315,33 @@ def get_sales_report_excel(
             entry["transfers"] += abs(amount)
         elif movement_type == MovementType.ADJUSTMENT:
             entry["adjustments"] += abs(amount)
+    product_current_stock = {
+        row.product_id: float(row.current_stock or 0)
+        for row in (
+            db.query(
+                PDVInventory.product_id,
+                func.sum(PDVInventory.quantity).label("current_stock"),
+            )
+            .filter(PDVInventory.terminal_id == terminal.id)
+            .group_by(PDVInventory.product_id)
+            .all()
+        )
+    }
     items = []
     for name, data in per_product.items():
         total = data["entries"] + data["exits"] + data["transfers"] + data["adjustments"]
         items.append((name, data["entries"], data["exits"], total))
     items.sort(key=lambda x: x[3], reverse=True)
-    for name, entries_val, exits_val, total_val in items:
-        ws_products.append([name, entries_val, exits_val, total_val])
+    for name, entries_val, exits_val, _total_val in items:
+        current_stock = 0.0
+        for row in (
+            db.query(PDVProduct.id)
+            .filter(PDVProduct.terminal_id == terminal.id)
+            .filter(PDVProduct.name == name)
+            .all()
+        ):
+            current_stock += product_current_stock.get(row.id, 0.0)
+        ws_products.append([name, entries_val, exits_val, current_stock])
 
     # Auto ajuste de largura
     for col in range(1, 3):
