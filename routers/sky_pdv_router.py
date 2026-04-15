@@ -1955,7 +1955,7 @@ def get_finance_summary_pdf(
 @router.get("/reports/stock-day.pdf")
 def get_stock_day_report_pdf(
     date: Optional[datetime] = None,
-    product_scope: str = Query("all", pattern="^(all|beverages)$"),
+    product_scope: str = Query("all", pattern="^(all|beverages|important)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -1991,7 +1991,12 @@ def get_stock_day_report_pdf(
     start_date = report_day.replace(hour=0, minute=0, second=0, microsecond=0)
     end_date = report_day.replace(hour=23, minute=59, second=59, microsecond=999999)
     issued_at = datetime.utcnow()
-    scope_label = "Apenas bebidas" if product_scope == "beverages" else "Todos os produtos"
+    if product_scope == "beverages":
+        scope_label = "Apenas bebidas"
+    elif product_scope == "important":
+        scope_label = "O que importa no estoque (produtos com controlo de stock)"
+    else:
+        scope_label = "Todos os produtos"
 
     def _is_beverage_product(product: PDVProduct) -> bool:
         category = str(getattr(product, "category", "") or "").lower()
@@ -2026,6 +2031,8 @@ def get_stock_day_report_pdf(
     if product_scope == "beverages":
         inventory_rows = [(inv, prod) for inv, prod in inventory_rows if _is_beverage_product(prod)]
         movement_rows = [(mov, prod) for mov, prod in movement_rows if _is_beverage_product(prod)]
+    elif product_scope == "important":
+        movement_rows = [(mov, prod) for mov, prod in movement_rows if bool(getattr(prod, "track_stock", False))]
 
     totals = {"entries": 0.0, "exits": 0.0, "adjustments": 0.0, "transfers": 0.0, "sales": 0.0}
     for movement, _product in movement_rows:
