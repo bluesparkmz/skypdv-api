@@ -2022,22 +2022,43 @@ def get_stock_day_report_pdf(
     story.append(summary_table)
     story.append(Spacer(1, 12))
 
-    stock_rows = [["Produto", "Local", "Atual", "Min", "Reservado"]]
+    product_summary = {}
     for inventory, product in inventory_rows:
+        product_name = str(product.name or "")
+        summary = product_summary.setdefault(
+            product_name,
+            {"entries": 0.0, "exits": 0.0, "current_stock": 0.0},
+        )
+        summary["current_stock"] += float(inventory.quantity or 0)
+
+    for movement, product in movement_rows:
+        product_name = str(product.name or "")
+        summary = product_summary.setdefault(
+            product_name,
+            {"entries": 0.0, "exits": 0.0, "current_stock": 0.0},
+        )
+        qty = abs(float(movement.quantity or 0))
+        if movement.movement_type in (MovementType.IN, MovementType.RETURN):
+            summary["entries"] += qty
+        elif movement.movement_type in (MovementType.OUT, MovementType.SALE):
+            summary["exits"] += qty
+
+    stock_rows = [["Produto", "Entradas", "Saidas", "Estoque atual"]]
+    sorted_products = sorted(product_summary.items(), key=lambda item: item[0].lower())
+    for product_name, summary in sorted_products:
         stock_rows.append(
             [
-                str(product.name or ""),
-                str(inventory.storage_location or "balcao"),
-                _fmt_num(inventory.quantity),
-                _fmt_num(inventory.min_quantity),
-                _fmt_num(inventory.reserved_quantity),
+                product_name,
+                _fmt_num(summary["entries"], 0),
+                _fmt_num(summary["exits"], 0),
+                _fmt_num(summary["current_stock"]),
             ]
         )
     if len(stock_rows) == 1:
-        stock_rows.append(["Sem estoque controlado", "-", "0", "0", "0"])
+        stock_rows.append(["Sem estoque controlado", "0", "0", "0"])
 
-    story.append(Paragraph("Estoque atual", styles["Heading3"]))
-    stock_table = Table(stock_rows, colWidths=[210, 90, 80, 70, 90])
+    story.append(Paragraph("Estoque por produto (Entradas/Saidas/Atual)", styles["Heading3"]))
+    stock_table = Table(stock_rows, colWidths=[240, 90, 90, 90])
     stock_table.setStyle(
         TableStyle(
             [
