@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User, PDVTerminalInvite, PDVTerminalUser
+from models import User, PDVTerminal, PDVTerminalInvite, PDVTerminalUser
 
 
 BLUESPARK_ACCOUNTS_URL = os.getenv("BLUESPARK_ACCOUNTS_URL", "https://accounts.bluesparkmz.com").rstrip("/")
@@ -58,13 +58,47 @@ def introspect_central_token(token: str) -> dict:
     return claims
 
 
+def _membership_matches_product(membership: dict) -> bool:
+    return (
+        membership.get("product") == BLUESPARK_PRODUCT_CODE
+        or membership.get("product_code") == BLUESPARK_PRODUCT_CODE
+        or membership.get("code") == BLUESPARK_PRODUCT_CODE
+        or membership.get("slug") == BLUESPARK_PRODUCT_CODE
+    )
+
+
+def _is_membership_active(membership: dict) -> bool:
+    status_value = str(membership.get("status") or membership.get("state") or "active").strip().lower()
+    return status_value in {"active", "trial", "granted", "enabled"}
+
+
 def _has_skypdv_membership(claims: dict) -> bool:
     if claims.get("product_code") == BLUESPARK_PRODUCT_CODE or claims.get("aud") == BLUESPARK_PRODUCT_CODE:
         return True
     for membership in claims.get("memberships") or []:
-        if membership.get("product") == BLUESPARK_PRODUCT_CODE and membership.get("status") == "active":
+        if _membership_matches_product(membership) and _is_membership_active(membership):
             return True
     return False
+
+
+def _has_local_pdv_access(db: Session, user: User) -> bool:
+    owns_terminal = db.query(PDVTerminal.id).filter(PDVTerminal.user_id == user.id).first()
+    if owns_terminal:
+        return True
+
+    membership = db.query(PDVTerminalUser.id).filter(
+        PDVTerminalUser.user_id == user.id,
+        PDVTerminalUser.is_active == True,
+    ).first()
+    if membership:
+        return True
+
+    pending_invite = db.query(PDVTerminalInvite.id).filter(
+        PDVTerminalInvite.invited_email == user.email,
+        PDVTerminalInvite.is_active == True,
+        PDVTerminalInvite.accepted_at.is_(None),
+    ).first()
+    return pending_invite is not None
 
 
 def sync_local_user_from_claims(db: Session, claims: dict) -> User:
@@ -164,11 +198,15 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token ausente")
 
     claims = introspect_central_token(token)
-    if not _has_skypdv_membership(claims):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sem acesso ao produto SkyPDV")
-
     user = sync_local_user_from_claims(db, claims)
     accept_pending_terminal_invites(db, user)
+
+    if not _has_skypdv_membership(claims) and not _has_local_pdv_access(db, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sem acesso ao produto SkyPDV",
+        )
+
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilizador inativo")
     return user
