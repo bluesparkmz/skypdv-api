@@ -2064,8 +2064,17 @@ def get_stock_day_report_pdf(
             summary["exits"] += qty
 
     stock_rows = [["Produto", "Entradas", "Saidas", "Estoque atual"]]
-    sorted_products = sorted(product_summary.items(), key=lambda item: item[0].lower())
+    sorted_products = sorted(
+        product_summary.items(),
+        key=lambda item: (
+            0 if item[1]["exits"] > 0 else 1,  # Produtos vendidos primeiro
+            -item[1]["exits"],                 # Maior saída no topo
+            item[0].lower(),
+        ),
+    )
+    sold_row_indexes = []
     for product_name, summary in sorted_products:
+        row_index = len(stock_rows)
         stock_rows.append(
             [
                 product_name,
@@ -2074,6 +2083,8 @@ def get_stock_day_report_pdf(
                 _fmt_num(summary["current_stock"]),
             ]
         )
+        if summary["exits"] > 0:
+            sold_row_indexes.append(row_index)
     if len(stock_rows) == 1:
         stock_rows.append(["Sem estoque controlado", "0", "0", "0"])
 
@@ -2090,6 +2101,15 @@ def get_stock_day_report_pdf(
             ]
         )
     )
+    for row_index in sold_row_indexes:
+        stock_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#E8F5E9")),
+                    ("TEXTCOLOR", (0, row_index), (-1, row_index), colors.HexColor("#1B5E20")),
+                ]
+            )
+        )
     story.append(stock_table)
     story.append(Spacer(1, 12))
 
