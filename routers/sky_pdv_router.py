@@ -1994,7 +1994,7 @@ def get_stock_day_report_pdf(
     if product_scope == "beverages":
         scope_label = "Apenas bebidas"
     elif product_scope == "important":
-        scope_label = "O que importa no estoque (produtos com controlo de stock)"
+        scope_label = "Apenas produtos com estoque controlado"
     else:
         scope_label = "Todos os produtos"
 
