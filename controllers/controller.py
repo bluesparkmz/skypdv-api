@@ -836,6 +836,63 @@ def get_product_stats(db: Session, terminal_id: int):
     )
 
 
+def get_category_sales_summary_today(db: Session, terminal_id: int, category: str):
+    if not category:
+        raise HTTPException(status_code=400, detail="Category is required")
+
+    now = datetime.now()
+    start_date = datetime(now.year, now.month, now.day, 0, 0, 0)
+    end_date = datetime(now.year, now.month, now.day, 23, 59, 59, 999999)
+
+    rows = (
+        db.query(
+            PDVSaleItem.product_id,
+            PDVSaleItem.product_name,
+            func.sum(PDVSaleItem.quantity).label("quantity_sold"),
+            func.sum(PDVSaleItem.subtotal).label("total_amount"),
+        )
+        .join(PDVSale, PDVSale.id == PDVSaleItem.sale_id)
+        .join(PDVProduct, PDVProduct.id == PDVSaleItem.product_id)
+        .filter(
+            PDVSale.terminal_id == terminal_id,
+            PDVSale.status == "completed",
+            PDVSale.created_at >= start_date,
+            PDVSale.created_at <= end_date,
+            PDVProduct.category == category,
+        )
+        .group_by(PDVSaleItem.product_id, PDVSaleItem.product_name)
+        .order_by(desc(func.sum(PDVSaleItem.quantity)), PDVSaleItem.product_name.asc())
+        .all()
+    )
+
+    items: List[schemas.PDVCategorySalesProductSummary] = []
+    total_quantity = Decimal("0.00")
+    total_amount = Decimal("0.00")
+
+    for row in rows:
+        quantity_sold = row.quantity_sold or Decimal("0.00")
+        amount = row.total_amount or Decimal("0.00")
+        total_quantity += quantity_sold
+        total_amount += amount
+        items.append(
+            schemas.PDVCategorySalesProductSummary(
+                product_id=row.product_id,
+                product_name=row.product_name,
+                quantity_sold=quantity_sold,
+                total_amount=amount,
+            )
+        )
+
+    return schemas.PDVCategorySalesSummary(
+        category=category,
+        date=start_date,
+        products_count=len(items),
+        total_quantity_sold=total_quantity,
+        total_amount=total_amount,
+        items=items,
+    )
+
+
 def _normalize_product_name(name: str) -> str:
     return " ".join((name or "").strip().lower().split())
 

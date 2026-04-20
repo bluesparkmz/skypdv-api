@@ -219,6 +219,16 @@ def list_products(
         skip=skip
     )
 
+
+@router.get("/products/category-summary/today", response_model=schemas.PDVCategorySalesSummary)
+def get_category_sales_summary_today(
+    category: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.get_category_sales_summary_today(db, terminal.id, category)
+
 @router.post("/products", response_model=schemas.PDVProduct)
 def create_product(
     product: schemas.PDVProductCreate,
