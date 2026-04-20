@@ -3,10 +3,6 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-<<<<<<< HEAD
-
-=======
->>>>>>> e9c7b60eb1449b06f2a4b65492164f08f5ba104b
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 connect_args = {}
