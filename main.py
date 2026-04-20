@@ -3,9 +3,11 @@ import threading
 import time
 
 import os
-from fastapi import Depends, FastAPI, Request, HTTPException
+from fastapi import Depends, FastAPI, Request, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import inspect, text
+from typing import Optional, List
 
 from auth import get_current_user
 from database import Base, engine, get_db, SessionLocal
@@ -43,6 +45,38 @@ app = FastAPI(
 _cash_register_worker_started = False
 
 
+def _ensure_account_columns():
+    try:
+        with engine.begin() as conn:
+            inspector = inspect(conn)
+            if "pdv_accounts" not in inspector.get_table_names():
+                return
+            existing = {col["name"] for col in inspector.get_columns("pdv_accounts")}
+            if "amount_paid" not in existing:
+                conn.execute(
+                    text(
+                        "ALTER TABLE pdv_accounts "
+                        "ADD COLUMN amount_paid NUMERIC(14,2) NOT NULL DEFAULT 0.00"
+                    )
+                )
+            if "change_amount" not in existing:
+                conn.execute(
+                    text(
+                        "ALTER TABLE pdv_accounts "
+                        "ADD COLUMN change_amount NUMERIC(14,2) NOT NULL DEFAULT 0.00"
+                    )
+                )
+            if "change_status" not in existing:
+                conn.execute(
+                    text(
+                        "ALTER TABLE pdv_accounts "
+                        "ADD COLUMN change_status VARCHAR(20) NOT NULL DEFAULT 'not_given'"
+                    )
+                )
+    except Exception as exc:
+        print(f"Account columns migration error: {exc}")
+
+
 def _cash_register_expiry_worker():
     while True:
         db = SessionLocal()
@@ -71,6 +105,7 @@ def start_cash_register_expiry_worker():
     global _cash_register_worker_started
     if _cash_register_worker_started:
         return
+    _ensure_account_columns()
     db = SessionLocal()
     try:
         controller.ensure_monthly_tax_records(db)
@@ -151,6 +186,72 @@ def update_phone(
 
 
 app.include_router(sky_pdv_router)
+
+# Legacy accounts routes without /skypdv prefix (frontend fallback)
+@app.get("/accounts", response_model=List[schemas.PDVAccount])
+def list_accounts_root(
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.get_accounts(db, current_user.id, status)
+
+
+@app.post("/accounts", response_model=schemas.PDVAccount)
+def create_account_root(
+    data: schemas.PDVAccountCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.create_account(db, data, current_user.id)
+
+
+@app.get("/accounts/{account_id}", response_model=schemas.PDVAccount)
+def get_account_root(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.get_account(db, account_id, current_user.id)
+
+
+@app.put("/accounts/{account_id}", response_model=schemas.PDVAccount)
+def update_account_root(
+    account_id: int,
+    data: schemas.PDVAccountUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.update_account(db, account_id, data, current_user.id)
+
+
+@app.post("/accounts/{account_id}/items", response_model=schemas.PDVAccount)
+def add_items_root(
+    account_id: int,
+    items: List[schemas.PDVAccountItemCreate],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.add_items_to_account(db, account_id, items, current_user.id)
+
+
+@app.post("/accounts/{account_id}/close", response_model=schemas.PDVAccount)
+def close_account_root(
+    account_id: int,
+    data: schemas.PDVAccountClose,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.close_account(db, account_id, data, current_user.id)
+
+
+@app.delete("/accounts/{account_id}")
+def delete_account_root(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.delete_account(db, account_id, current_user.id)
 
 # FastFood compatibility routes without /skypdv prefix (frontend legacy)
 def _get_or_create_fastfood_restaurant(db: Session, current_user: User) -> FastFoodRestaurant:

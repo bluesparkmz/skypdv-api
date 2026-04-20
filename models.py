@@ -85,6 +85,7 @@ class PDVTerminal(Base):
     products = relationship("PDVProduct", back_populates="terminal", cascade="all, delete-orphan")
     cash_registers = relationship("PDVCashRegister", back_populates="terminal", cascade="all, delete-orphan")
     sales = relationship("PDVSale", back_populates="terminal", cascade="all, delete-orphan")
+    accounts = relationship("PDVAccount", back_populates="terminal", cascade="all, delete-orphan")
 
 
 class PDVTerminalUser(Base):
@@ -318,6 +319,48 @@ class PDVSaleItem(Base):
 
     sale = relationship("PDVSale", back_populates="items")
     product = relationship("PDVProduct", back_populates="sale_items")
+
+
+class PDVAccount(Base):
+    __tablename__ = "pdv_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=False)
+    linked_sale_id = Column(Integer, ForeignKey("pdv_sales.id", ondelete="SET NULL"), nullable=True)
+    client_name = Column(String(255), nullable=False)
+    client_phone = Column(String(50), nullable=True)
+    status = Column(String(20), default="open", nullable=False)
+    current_balance = Column(DECIMAL(14, 2), default=0.00)
+    amount_paid = Column(DECIMAL(14, 2), default=0.00)
+    change_amount = Column(DECIMAL(14, 2), default=0.00)
+    change_status = Column(String(20), default="not_given")
+    opened_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    opened_by_name = Column(String(255), nullable=True)
+    closed_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    closed_by_name = Column(String(255), nullable=True)
+    notes = Column(Text, nullable=True)
+    closed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    terminal = relationship("PDVTerminal", back_populates="accounts")
+    items = relationship("PDVAccountItem", back_populates="account", cascade="all, delete-orphan")
+
+
+class PDVAccountItem(Base):
+    __tablename__ = "pdv_account_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(Integer, ForeignKey("pdv_accounts.id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(Integer, ForeignKey("pdv_products.id", ondelete="SET NULL"), nullable=True)
+    product_name = Column(String(255), nullable=False)
+    quantity = Column(DECIMAL(14, 3), nullable=False)
+    unit_price = Column(DECIMAL(14, 2), nullable=False)
+    subtotal = Column(DECIMAL(14, 2), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    account = relationship("PDVAccount", back_populates="items")
 
 
 class PDVCategory(Base):

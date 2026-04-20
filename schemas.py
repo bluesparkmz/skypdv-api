@@ -551,6 +551,7 @@ class PDVSaleCreate(BaseModel):
     customer_phone: Optional[str] = None
     payment_method: PaymentMethodEnum
     amount_paid: Optional[Decimal] = None
+    change_status: Optional[str] = None
     discount_amount: Decimal = Decimal("0.00")
     discount_percent: Decimal = Decimal("0.00")
     sale_type: SaleTypeEnum = SaleTypeEnum.LOCAL
@@ -612,6 +613,76 @@ class PDVSaleVoid(BaseModel):
     """Schema for voiding a sale"""
     reason: str = Field(..., min_length=1)
     refund_to_wallet: bool = False  # Se deve devolver para SkyWallet
+
+
+# ===================================================================
+# Accounts Schemas - Contas abertas/fechadas
+# ===================================================================
+
+class PDVAccountItemCreate(BaseModel):
+    product_id: int
+    quantity: Decimal = Field(..., gt=0)
+    unit_price: Optional[Decimal] = None
+
+
+class PDVAccountItemUpdate(BaseModel):
+    quantity: Decimal = Field(..., gt=0)
+
+
+class PDVAccountItem(BaseModel):
+    id: int
+    account_id: int
+    product_id: Optional[int] = None
+    product_name: str
+    quantity: Decimal
+    unit_price: Decimal
+    subtotal: Decimal
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PDVAccountCreate(BaseModel):
+    client_name: str = Field(..., min_length=1)
+    client_phone: Optional[str] = None
+    notes: Optional[str] = None
+    items: Optional[List[PDVAccountItemCreate]] = None
+
+
+class PDVAccountUpdate(BaseModel):
+    client_name: Optional[str] = None
+    client_phone: Optional[str] = None
+    notes: Optional[str] = None
+    change_status: Optional[str] = None
+
+
+class PDVAccountClose(BaseModel):
+    payment_method: PaymentMethodEnum
+    amount_paid: Decimal
+    change_status: str = "not_given"
+
+
+class PDVAccount(BaseModel):
+    id: int
+    terminal_id: int
+    linked_sale_id: Optional[int] = None
+    client_name: str
+    client_phone: Optional[str] = None
+    status: str
+    current_balance: Decimal
+    amount_paid: Decimal
+    change_amount: Decimal
+    change_status: str
+    opened_by_user_id: Optional[int] = None
+    opened_by_name: Optional[str] = None
+    closed_by_user_id: Optional[int] = None
+    closed_by_name: Optional[str] = None
+    notes: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    items: List[PDVAccountItem] = []
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===================================================================

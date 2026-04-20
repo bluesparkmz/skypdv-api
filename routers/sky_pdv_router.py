@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import List, Optional
 from datetime import datetime
 import io
 
 from database import get_db
 from auth import get_current_user
-from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem
+from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct, PDVInventory
 import schemas
 from controllers import controller
 import openpyxl
@@ -209,6 +209,7 @@ def list_products(
 ):
     """Listar produtos com filtros (incluindo is_fastfood para FastFood)"""
     terminal = controller.get_terminal_required(db, current_user.id)
+<<<<<<< HEAD
     return controller.get_products(
         db, terminal.id, 
         search=search, 
@@ -231,6 +232,20 @@ def get_category_sales_summary_today(
 
 @router.post("/products", response_model=schemas.PDVProduct)
 def create_product(
+=======
+    return controller.get_products(
+        db, terminal.id, 
+        search=search, 
+        category=category, 
+        source_type=source_type,
+        is_fastfood=is_fastfood,
+        limit=limit,
+        skip=skip
+    )
+
+@router.post("/products", response_model=schemas.PDVProduct)
+def create_product(
+>>>>>>> e9c7b60eb1449b06f2a4b65492164f08f5ba104b
     product: schemas.PDVProductCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -691,7 +706,7 @@ def get_sales_report(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Gerar relatório resumido de vendas para um período livre
+    Gerar relatório resumido de vendas para um periodo livre
     - Caixas veem apenas suas próprias vendas
     - Admins veem todas as vendas do terminal
     - Se user_id for fornecido e usuário for admin, filtra por esse caixa específico
@@ -727,6 +742,7 @@ def get_sales_report_pdf(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     user_id: Optional[int] = None,
+    product_scope: str = Query("all", pattern="^(all|beverages)$"),
     phone: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -786,10 +802,36 @@ def get_sales_report_pdf(
             return str(int(float(v)))
         except Exception:
             return str(v)
+
+    beverage_filter = or_(
+        func.lower(func.coalesce(PDVProduct.category, "")).like("%bebida%"),
+        func.lower(func.coalesce(PDVProduct.category, "")).like("%drink%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%sumo%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%suco%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%agua%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%água%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%refrigerante%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%cerveja%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%vinho%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%whisky%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%cafe%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%café%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%cha%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%chá%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%milkshake%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%juice%"),
+        func.lower(func.coalesce(PDVProduct.name, "")).like("%soda%"),
+    )
+
+    def _apply_product_scope(query):
+        if product_scope == "beverages":
+            return query.filter(beverage_filter)
+        return query
  
     issued_at = datetime.utcnow()
     period_label = f"{_fmt_date(start_date)} até {_fmt_date(end_date)}"
  
+    scope_label = "Apenas bebidas" if product_scope == "beverages" else "Todos os produtos"
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
@@ -802,7 +844,8 @@ def get_sales_report_pdf(
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Relatório: Vendas (Resumo)", styles["Heading2"]))
-    story.append(Paragraph(f"Período: {period_label}", styles["Normal"]))
+    story.append(Paragraph(f"Periodo: {period_label}", styles["Normal"]))
+    story.append(Paragraph(f"Escopo dos produtos: {scope_label}", styles["Normal"]))
     story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)} (Local)", styles["Normal"]))
     story.append(Spacer(1, 12))
 
@@ -837,15 +880,48 @@ def get_sales_report_pdf(
     story.append(summary_table)
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Breakdown de Pagamentos", styles["Heading3"]))
+    story.append(Paragraph("Pagamentos por Metodo", styles["Heading3"]))
+    cash_total = summary.get("cash_sales") or 0
+    card_total = summary.get("card_sales") or 0
+    skywallet_total = summary.get("skywallet_sales") or 0
+    mpesa_total = summary.get("mpesa_sales") or 0
+    mixed_total = summary.get("mixed_sales") or 0
     payments_table_data = [
-        ["Método", "Valor"],
-        ["Dinheiro", _fmt_2(summary.get("cash_sales"))],
-        ["Cartão", _fmt_2(summary.get("card_sales"))],
-        ["SkyWallet", _fmt_2(summary.get("skywallet_sales"))],
-        ["M-Pesa", _fmt_2(summary.get("mpesa_sales"))],
-        ["Misto", _fmt_2(summary.get("mixed_sales"))],
+        ["Método", "Total"],
+        ["Cash", _fmt_2(cash_total)],
+        ["M-pesa", _fmt_2(mpesa_total)],
+        ["E-Mola", _fmt_2(skywallet_total)],
+        ["BCI POS", _fmt_2(card_total)],
+        ["Misto", _fmt_2(mixed_total)],
+        ["Total pagamentos", _fmt_2(cash_total + card_total + skywallet_total + mpesa_total + mixed_total)],
     ]
+    def _has_value(v) -> bool:
+        try:
+            return float(v) != 0.0
+        except Exception:
+            return bool(v)
+
+    payment_rows = [
+        ("Cash", cash_total),
+        ("M-pesa", mpesa_total),
+        ("E-Mola", skywallet_total),
+        ("BCI POS", card_total),
+        ("Misto", mixed_total),
+    ]
+    visible_rows = [(name, total) for name, total in payment_rows if _has_value(total)]
+    payments_table_data = [["Metodo", "Total"]]
+    if not visible_rows:
+        payments_table_data.append(["Sem pagamentos", _fmt_2(0)])
+    else:
+        for name, total in visible_rows:
+            payments_table_data.append([name, _fmt_2(total)])
+    payments_table_data.append(
+        [
+            "Total pagamentos",
+            _fmt_2(cash_total + card_total + skywallet_total + mpesa_total + mixed_total),
+        ]
+    )
+
     payments_table = Table(payments_table_data, colWidths=[170, 340])
     payments_table.setStyle(
         TableStyle(
@@ -861,7 +937,37 @@ def get_sales_report_pdf(
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Produtos mais vendidos (Top 30)", styles["Heading3"]))
-    top_products = controller.get_top_products_report(db, terminal.id, start_date, end_date, limit=30, user_id=filter_user_id)
+    top_products = controller.get_top_products_report(db, terminal.id, start_date, end_date, limit=100, user_id=filter_user_id)
+    if product_scope == "beverages":
+        filtered_top_products = []
+        for p in top_products:
+            product_name = str(p.get("product_name") or "").lower()
+            if any(
+                keyword in product_name
+                for keyword in [
+                    "bebida",
+                    "drink",
+                    "sumo",
+                    "suco",
+                    "agua",
+                    "água",
+                    "refrigerante",
+                    "cerveja",
+                    "vinho",
+                    "whisky",
+                    "cafe",
+                    "café",
+                    "cha",
+                    "chá",
+                    "milkshake",
+                    "juice",
+                    "soda",
+                ]
+            ):
+                filtered_top_products.append(p)
+        top_products = filtered_top_products[:30]
+    else:
+        top_products = top_products[:30]
     items_table_data = [["Produto", "Qtd", "Receita", "Lucro"]]
     for p in top_products:
         items_table_data.append(
@@ -887,7 +993,87 @@ def get_sales_report_pdf(
     story.append(items_table)
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Resumo de Estoque", styles["Heading3"]))
+    # Lista completa de produtos vendidos no periodo com estoque atual
+    story.append(Paragraph("Produtos vendidos no periodo", styles["Heading3"]))
+    sold_products_query = (
+        db.query(
+            PDVProduct.id.label("product_id"),
+            PDVProduct.name,
+            func.sum(PDVSaleItem.quantity).label("qty"),
+            func.max(PDVInventory.quantity).label("stock"),
+        )
+        .join(PDVSale, PDVSale.id == PDVSaleItem.sale_id)
+        .join(PDVProduct, PDVProduct.id == PDVSaleItem.product_id)
+        .outerjoin(
+            PDVInventory,
+            (PDVInventory.product_id == PDVProduct.id) & (PDVInventory.terminal_id == terminal.id),
+        )
+        .filter(PDVSale.terminal_id == terminal.id)
+        .filter(PDVSale.created_at >= start_date)
+        .filter(PDVSale.created_at <= end_date)
+        .filter(PDVSale.status == "completed")
+    )
+    if filter_user_id:
+        sold_products_query = sold_products_query.filter(PDVSale.created_by == filter_user_id)
+    sold_products = (
+        _apply_product_scope(sold_products_query)
+        .group_by(PDVProduct.id, PDVProduct.name)
+        .order_by(func.sum(PDVSaleItem.quantity).desc())
+        .all()
+    )
+    product_movements = (
+        _apply_product_scope(
+            db.query(
+                PDVProduct.id.label("product_id"),
+                PDVStockMovement.movement_type,
+                func.sum(PDVStockMovement.quantity).label("quantity"),
+            )
+            .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
+            .filter(PDVStockMovement.terminal_id == terminal.id)
+            .filter(PDVStockMovement.created_at >= start_date)
+            .filter(PDVStockMovement.created_at <= end_date)
+            .group_by(PDVProduct.id, PDVStockMovement.movement_type)
+        )
+        .all()
+    )
+    movement_by_product = {}
+    for movement in product_movements:
+        stats = movement_by_product.setdefault(movement.product_id, {"entries": 0, "exits": 0})
+        amount = float(movement.quantity or 0)
+        if movement.movement_type in (MovementType.IN, MovementType.RETURN):
+            stats["entries"] += amount
+        elif movement.movement_type in (MovementType.OUT, MovementType.SALE):
+            stats["exits"] += abs(amount)
+    sold_table_data = [["Produto", "Qtd vendida", "Entradas", "Saidas", "Estoque atual"]]
+    for product in sold_products:
+        movement_stats = movement_by_product.get(product.product_id, {"entries": 0, "exits": 0})
+        sold_table_data.append(
+            [
+                str(product.name or ""),
+                _fmt_int(product.qty or 0),
+                _fmt_int(movement_stats["entries"]),
+                _fmt_int(movement_stats["exits"]),
+                _fmt_int(product.stock or 0),
+            ]
+        )
+    if len(sold_table_data) == 1:
+        sold_table_data.append(["Sem produtos vendidos", "0", "0", "0", "0"])
+    sold_table = Table(sold_table_data, colWidths=[220, 75, 70, 70, 75])
+    sold_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(sold_table)
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("Movimento de Produtos (Entradas e Saídas)", styles["Heading3"]))
     movements = (
         db.query(PDVStockMovement.movement_type, func.sum(PDVStockMovement.quantity))
         .filter(PDVStockMovement.terminal_id == terminal.id)
@@ -899,12 +1085,16 @@ def get_sales_report_pdf(
     move_sums = {mt: (qty or 0) for mt, qty in movements}
     entries = (move_sums.get(MovementType.IN, 0) or 0) + (move_sums.get(MovementType.RETURN, 0) or 0)
     exits = abs(move_sums.get(MovementType.OUT, 0) or 0) + abs(move_sums.get(MovementType.SALE, 0) or 0)
+    transfers = move_sums.get(MovementType.TRANSFER, 0) or 0
+    adjustments = move_sums.get(MovementType.ADJUSTMENT, 0) or 0
+    total_movements = entries + exits + abs(transfers) + abs(adjustments)
     stock_table_data = [
         ["Tipo", "Quantidade"],
         ["Entradas (IN/RETURN)", _fmt_int(entries)],
         ["Saídas (OUT/SALE)", _fmt_int(exits)],
-        ["Transferências", _fmt_int(move_sums.get(MovementType.TRANSFER, 0) or 0)],
-        ["Ajustes", _fmt_int(move_sums.get(MovementType.ADJUSTMENT, 0) or 0)],
+        ["Transferências", _fmt_int(transfers)],
+        ["Ajustes", _fmt_int(adjustments)],
+        ["Total movimentado", _fmt_int(total_movements)],
     ]
     stock_table = Table(stock_table_data, colWidths=[240, 270])
     stock_table.setStyle(
@@ -918,6 +1108,69 @@ def get_sales_report_pdf(
         )
     )
     story.append(stock_table)
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("Movimentos por Produto", styles["Heading3"]))
+    product_movements = (
+        db.query(
+            PDVProduct.name,
+            PDVStockMovement.movement_type,
+            func.sum(PDVStockMovement.quantity),
+        )
+        .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
+        .filter(PDVStockMovement.terminal_id == terminal.id)
+        .filter(PDVStockMovement.created_at >= start_date)
+        .filter(PDVStockMovement.created_at <= end_date)
+        .group_by(PDVProduct.name, PDVStockMovement.movement_type)
+        .all()
+    )
+    per_product = {}
+    for name, movement_type, qty in product_movements:
+        entry = per_product.setdefault(
+            name or "Sem nome",
+            {"entries": 0, "exits": 0, "transfers": 0, "adjustments": 0},
+        )
+        amount = float(qty or 0)
+        if movement_type in (MovementType.IN, MovementType.RETURN):
+            entry["entries"] += amount
+        elif movement_type in (MovementType.OUT, MovementType.SALE):
+            entry["exits"] += abs(amount)
+        elif movement_type == MovementType.TRANSFER:
+            entry["transfers"] += abs(amount)
+        elif movement_type == MovementType.ADJUSTMENT:
+            entry["adjustments"] += abs(amount)
+
+    if per_product:
+        rows = [["Produto", "Entradas", "Saídas", "Total mov."]]
+        items = []
+        for name, data in per_product.items():
+            total = data["entries"] + data["exits"] + data["transfers"] + data["adjustments"]
+            items.append((name, data["entries"], data["exits"], total))
+        items.sort(key=lambda x: x[3], reverse=True)
+        for name, entries_val, exits_val, total_val in items[:50]:
+            rows.append(
+                [
+                    str(name),
+                    _fmt_int(entries_val),
+                    _fmt_int(exits_val),
+                    _fmt_int(total_val),
+                ]
+            )
+        product_table = Table(rows, colWidths=[240, 70, 70, 70])
+        product_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ]
+            )
+        )
+        story.append(product_table)
+    else:
+        story.append(Paragraph("Nenhum movimento de produto no periodo.", styles["Normal"]))
 
     doc.build(story)
     pdf_bytes = buffer.getvalue()
@@ -968,9 +1221,16 @@ def get_sales_report_excel(
     ws = wb.active
     ws.title = "Resumo de Vendas"
 
+    cash_total = summary.get("cash_sales") or 0
+    card_total = summary.get("card_sales") or 0
+    skywallet_total = summary.get("skywallet_sales") or 0
+    mpesa_total = summary.get("mpesa_sales") or 0
+    mixed_total = summary.get("mixed_sales") or 0
+    total_payments = cash_total + card_total + skywallet_total + mpesa_total + mixed_total
+
     rows = [
-        ("Período Início", start_date.strftime("%d/%m/%Y %H:%M")),
-        ("Período Fim", end_date.strftime("%d/%m/%Y %H:%M")),
+        ("Periodo Inicio", start_date.strftime("%d/%m/%Y %H:%M")),
+        ("Periodo Fim", end_date.strftime("%d/%m/%Y %H:%M")),
         ("Total Vendas", summary["total_sales"]),
         ("Receita Bruta", summary["total_revenue"]),
         ("Custo Total", summary["total_cost"]),
@@ -979,17 +1239,153 @@ def get_sales_report_excel(
         ("Itens Vendidos", summary["total_items_sold"]),
         ("Descontos", summary["total_discounts"]),
         ("Impostos", summary["total_taxes"]),
-        ("Vendas Dinheiro", summary["cash_sales"]),
-        ("Vendas Cartão", summary["card_sales"]),
-        ("Vendas Skywallet", summary["skywallet_sales"]),
-        ("Vendas Mpesa", summary["mpesa_sales"]),
+        ("Vendas Cash", cash_total),
+        ("Vendas M-pesa", mpesa_total),
+        ("Vendas E-Mola", skywallet_total),
+        ("Vendas BCI POS", card_total),
+        ("Vendas Misto", mixed_total),
+        ("Total pagamentos", total_payments),
         ("Vendas Anuladas", summary["voided_sales"]),
         ("Valor Anulado", summary["voided_amount"]),
     ]
 
     ws.append(["Métrica", "Valor"])
+    def _has_value(v) -> bool:
+        try:
+            return float(v) != 0.0
+        except Exception:
+            return bool(v)
+
+    payment_row_names = {
+        "Vendas Cash",
+        "Vendas M-pesa",
+        "Vendas E-Mola",
+        "Vendas BCI POS",
+        "Vendas Misto",
+    }
+    payment_rows = [
+        ("Vendas Cash", cash_total),
+        ("Vendas M-pesa", mpesa_total),
+        ("Vendas E-Mola", skywallet_total),
+        ("Vendas BCI POS", card_total),
+        ("Vendas Misto", mixed_total),
+    ]
+    visible_payments = [(name, total) for name, total in payment_rows if _has_value(total)]
+    cleaned_rows = []
+    for name, value in rows:
+        if name in payment_row_names:
+            continue
+        if name == "Total pagamentos":
+            if not visible_payments:
+                cleaned_rows.append(("Sem pagamentos", 0))
+            else:
+                cleaned_rows.extend(visible_payments)
+            cleaned_rows.append((name, value))
+            continue
+        cleaned_rows.append((name, value))
+    rows = cleaned_rows
+
     for name, value in rows:
         ws.append([name, value])
+
+    ws.append([])
+    ws.append(["Movimento de Produtos (Entradas e Saídas)", "Quantidade"])
+    movements = (
+        db.query(PDVStockMovement.movement_type, func.sum(PDVStockMovement.quantity))
+        .filter(PDVStockMovement.terminal_id == terminal.id)
+        .filter(PDVStockMovement.created_at >= start_date)
+        .filter(PDVStockMovement.created_at <= end_date)
+        .group_by(PDVStockMovement.movement_type)
+        .all()
+    )
+    move_sums = {mt: (qty or 0) for mt, qty in movements}
+    entries = (move_sums.get(MovementType.IN, 0) or 0) + (move_sums.get(MovementType.RETURN, 0) or 0)
+    exits = abs(move_sums.get(MovementType.OUT, 0) or 0) + abs(move_sums.get(MovementType.SALE, 0) or 0)
+    transfers = move_sums.get(MovementType.TRANSFER, 0) or 0
+    adjustments = move_sums.get(MovementType.ADJUSTMENT, 0) or 0
+    total_movements = entries + exits + abs(transfers) + abs(adjustments)
+    ws.append(["Entradas (IN/RETURN)", entries])
+    ws.append(["Saídas (OUT/SALE)", exits])
+    ws.append(["Transferências", transfers])
+    ws.append(["Ajustes", adjustments])
+    ws.append(["Total movimentado", total_movements])
+
+    from openpyxl.styles import PatternFill, Font
+
+    ws_products = wb.create_sheet("Movimentos Produtos")
+    ws_products.append(["Produto", "Entradas", "Saidas", "Estoque atual"])
+    product_movements = (
+        db.query(
+            PDVProduct.name,
+            PDVStockMovement.movement_type,
+            func.sum(PDVStockMovement.quantity),
+        )
+        .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
+        .filter(PDVStockMovement.terminal_id == terminal.id)
+        .filter(PDVStockMovement.created_at >= start_date)
+        .filter(PDVStockMovement.created_at <= end_date)
+        .group_by(PDVProduct.name, PDVStockMovement.movement_type)
+        .all()
+    )
+    per_product = {}
+    for name, movement_type, qty in product_movements:
+        entry = per_product.setdefault(
+            name or "Sem nome",
+            {"entries": 0, "exits": 0, "transfers": 0, "adjustments": 0},
+        )
+        amount = float(qty or 0)
+        if movement_type in (MovementType.IN, MovementType.RETURN):
+            entry["entries"] += amount
+        elif movement_type in (MovementType.OUT, MovementType.SALE):
+            entry["exits"] += abs(amount)
+        elif movement_type == MovementType.TRANSFER:
+            entry["transfers"] += abs(amount)
+        elif movement_type == MovementType.ADJUSTMENT:
+            entry["adjustments"] += abs(amount)
+    product_current_stock = {
+        row.product_id: float(row.current_stock or 0)
+        for row in (
+            db.query(
+                PDVInventory.product_id,
+                func.sum(PDVInventory.quantity).label("current_stock"),
+            )
+            .filter(PDVInventory.terminal_id == terminal.id)
+            .group_by(PDVInventory.product_id)
+            .all()
+        )
+    }
+    items = []
+    for name, data in per_product.items():
+        total = data["entries"] + data["exits"] + data["transfers"] + data["adjustments"]
+        items.append((name, data["entries"], data["exits"], total))
+    # Produtos vendidos (saídas > 0) aparecem primeiro.
+    items.sort(
+        key=lambda x: (
+            0 if x[2] > 0 else 1,
+            -x[2],
+            str(x[0]).lower(),
+        )
+    )
+
+    sold_fill = PatternFill(fill_type="solid", fgColor="E8F5E9")
+    sold_font = Font(color="1B5E20")
+
+    for name, entries_val, exits_val, _total_val in items:
+        current_stock = 0.0
+        for row in (
+            db.query(PDVProduct.id)
+            .filter(PDVProduct.terminal_id == terminal.id)
+            .filter(PDVProduct.name == name)
+            .all()
+        ):
+            current_stock += product_current_stock.get(row.id, 0.0)
+        ws_products.append([name, entries_val, exits_val, current_stock])
+        if float(exits_val or 0) > 0:
+            current_row = ws_products.max_row
+            for col in range(1, 5):
+                cell = ws_products.cell(row=current_row, column=col)
+                cell.fill = sold_fill
+                cell.font = sold_font
 
     # Auto ajuste de largura
     for col in range(1, 3):
@@ -1115,7 +1511,7 @@ def get_products_report_pdf(
 
 @router.get("/reports/periodic", response_model=schemas.SalesSummary)
 def get_periodic_sales_report(
-    period: str = Query(..., description="Tipo de período: day, month, year"),
+    period: str = Query(..., description="Tipo de periodo: day, month, year"),
     date: str = Query(..., description="Data no formato AAAA-MM-DD, AAAA-MM ou AAAA"),
     user_id: Optional[int] = None,
     db: Session = Depends(get_db),
@@ -1179,7 +1575,7 @@ def get_top_products_report(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Relatório de produtos mais vendidos em um período.
+    Relatorio de produtos mais vendidos em um periodo.
     Se não informar datas, assume mês atual.
     """
     terminal = controller.get_terminal_required(db, current_user.id)
@@ -1198,7 +1594,7 @@ def get_sales_by_day(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Breakdown de vendas por dia em um período.
+    Breakdown de vendas por dia em um periodo.
     Útil para gráficos de tendência diária.
     Se não informar datas, assume mês atual.
     """
@@ -1512,7 +1908,7 @@ def get_finance_summary_pdf(
     story.append(Spacer(1, 8))
     story.append(
         Paragraph(
-            f"Período: {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}",
+            f"Periodo: {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}",
             styles["Normal"],
         )
     )
@@ -1566,7 +1962,7 @@ def get_finance_summary_pdf(
         )
         story.append(table)
     else:
-        story.append(Paragraph("Sem despesas no período.", styles["Normal"]))
+        story.append(Paragraph("Sem despesas no periodo.", styles["Normal"]))
 
     doc.build(story)
     buffer.seek(0)
@@ -1578,6 +1974,257 @@ def get_finance_summary_pdf(
         send_whatsapp_file(phone, filename, "application/pdf", pdf_bytes, caption=caption)
         send_whatsapp_text(phone, caption)
 
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
+
+
+@router.get("/reports/stock-day.pdf")
+def get_stock_day_report_pdf(
+    date: Optional[datetime] = None,
+    product_scope: str = Query("all", pattern="^(all|beverages|important)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from decimal import Decimal
+    from models import PDVProduct
+
+    def _fmt_dt(dt: Optional[datetime]) -> str:
+        if not dt:
+            return ""
+        return dt.strftime("%d/%m/%Y %H:%M")
+
+    def _fmt_num(v, digits: int = 3) -> str:
+        if v is None:
+            return f"{0:.{digits}f}"
+        if isinstance(v, bool):
+            return f"{1 if v else 0:.{digits}f}"
+        if isinstance(v, int):
+            return f"{v:.{digits}f}"
+        if isinstance(v, Decimal):
+            return f"{v:.{digits}f}"
+        try:
+            return f"{float(v):.{digits}f}"
+        except Exception:
+            return str(v)
+
+    def _fmt_qty(v) -> str:
+        """Format quantity without forcing trailing .000 for integers."""
+        try:
+            value = float(v or 0)
+        except Exception:
+            return str(v)
+        if value.is_integer():
+            return str(int(value))
+        text = f"{value:.3f}".rstrip("0").rstrip(".")
+        return text or "0"
+
+    report_day = date or datetime.utcnow()
+    start_date = report_day.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_date = report_day.replace(hour=23, minute=59, second=59, microsecond=999999)
+    issued_at = datetime.utcnow()
+    if product_scope == "beverages":
+        scope_label = "Apenas bebidas"
+    elif product_scope == "important":
+        scope_label = "Apenas produtos com estoque controlado"
+    else:
+        scope_label = "Todos os produtos"
+
+    def _is_beverage_product(product: PDVProduct) -> bool:
+        category = str(getattr(product, "category", "") or "").lower()
+        name = str(getattr(product, "name", "") or "").lower()
+        keywords = [
+            "bebida", "drink", "sumo", "suco", "agua", "água", "refrigerante",
+            "cerveja", "vinho", "whisky", "cafe", "café", "cha", "chá",
+            "milkshake", "juice", "soda",
+        ]
+        return any(k in category for k in keywords) or any(k in name for k in keywords)
+
+    inventory_rows = (
+        db.query(PDVInventory, PDVProduct)
+        .join(PDVProduct, PDVProduct.id == PDVInventory.product_id)
+        .filter(PDVInventory.terminal_id == terminal.id)
+        .filter(PDVProduct.is_active == True)
+        .filter(PDVProduct.track_stock == True)
+        .order_by(PDVProduct.name.asc(), PDVInventory.storage_location.asc())
+        .all()
+    )
+
+    movement_rows = (
+        db.query(PDVStockMovement, PDVProduct)
+        .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
+        .filter(PDVStockMovement.terminal_id == terminal.id)
+        .filter(PDVStockMovement.created_at >= start_date)
+        .filter(PDVStockMovement.created_at <= end_date)
+        .order_by(PDVStockMovement.created_at.desc())
+        .all()
+    )
+
+    if product_scope == "beverages":
+        inventory_rows = [(inv, prod) for inv, prod in inventory_rows if _is_beverage_product(prod)]
+        movement_rows = [(mov, prod) for mov, prod in movement_rows if _is_beverage_product(prod)]
+    elif product_scope == "important":
+        movement_rows = [(mov, prod) for mov, prod in movement_rows if bool(getattr(prod, "track_stock", False))]
+
+    totals = {"entries": 0.0, "exits": 0.0, "adjustments": 0.0, "transfers": 0.0, "sales": 0.0}
+    for movement, _product in movement_rows:
+        qty = abs(float(movement.quantity or 0))
+        if movement.movement_type in (MovementType.IN, MovementType.RETURN):
+            totals["entries"] += qty
+        elif movement.movement_type == MovementType.SALE:
+            totals["sales"] += qty
+            totals["exits"] += qty
+        elif movement.movement_type == MovementType.OUT:
+            totals["exits"] += qty
+        elif movement.movement_type == MovementType.ADJUSTMENT:
+            totals["adjustments"] += qty
+        elif movement.movement_type == MovementType.TRANSFER:
+            totals["transfers"] += qty
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28)
+    styles = getSampleStyleSheet()
+    story = []
+
+    story.append(Paragraph("Relatorio: Stock do Dia", styles["Title"]))
+    story.append(Paragraph(terminal.name or "SkyPDV", styles["Heading2"]))
+    story.append(Paragraph(f"Data do stock: {start_date.strftime('%d/%m/%Y')}", styles["Normal"]))
+    story.append(Paragraph(f"Escopo dos produtos: {scope_label}", styles["Normal"]))
+    story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)}", styles["Normal"]))
+    story.append(Spacer(1, 12))
+
+    summary_rows = [
+        ["Resumo", "Quantidade"],
+        ["Entradas", _fmt_num(totals["entries"], 0)],
+        ["Saidas", _fmt_num(totals["exits"], 0)],
+        ["Vendido", _fmt_num(totals["sales"], 0)],
+        ["Ajustes", _fmt_num(totals["adjustments"], 0)],
+        ["Transferencias", _fmt_num(totals["transfers"], 0)],
+        ["Movimentos do dia", str(len(movement_rows))],
+        ["Itens em estoque", str(len(inventory_rows))],
+    ]
+    summary_table = Table(summary_rows, colWidths=[260, 220])
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(summary_table)
+    story.append(Spacer(1, 12))
+
+    product_summary = {}
+    for inventory, product in inventory_rows:
+        product_name = str(product.name or "")
+        summary = product_summary.setdefault(
+            product_name,
+            {"entries": 0.0, "exits": 0.0, "current_stock": 0.0},
+        )
+        summary["current_stock"] += float(inventory.quantity or 0)
+
+    for movement, product in movement_rows:
+        product_name = str(product.name or "")
+        summary = product_summary.setdefault(
+            product_name,
+            {"entries": 0.0, "exits": 0.0, "current_stock": 0.0},
+        )
+        qty = abs(float(movement.quantity or 0))
+        if movement.movement_type in (MovementType.IN, MovementType.RETURN):
+            summary["entries"] += qty
+        elif movement.movement_type in (MovementType.OUT, MovementType.SALE):
+            summary["exits"] += qty
+
+    stock_rows = [["Produto", "Entradas", "Saidas", "Estoque atual"]]
+    sorted_products = sorted(
+        product_summary.items(),
+        key=lambda item: (
+            0 if item[1]["exits"] > 0 else 1,  # Produtos vendidos primeiro
+            -item[1]["exits"],                 # Maior saída no topo
+            item[0].lower(),
+        ),
+    )
+    sold_row_indexes = []
+    for product_name, summary in sorted_products:
+        row_index = len(stock_rows)
+        stock_rows.append(
+            [
+                product_name,
+                _fmt_num(summary["entries"], 0),
+                _fmt_num(summary["exits"], 0),
+                _fmt_qty(summary["current_stock"]),
+            ]
+        )
+        if summary["exits"] > 0:
+            sold_row_indexes.append(row_index)
+    if len(stock_rows) == 1:
+        stock_rows.append(["Sem estoque controlado", "0", "0", "0"])
+
+    story.append(Paragraph("Estoque por produto (Entradas/Saidas/Atual)", styles["Heading3"]))
+    stock_table = Table(stock_rows, colWidths=[240, 90, 90, 90])
+    stock_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+            ]
+        )
+    )
+    for row_index in sold_row_indexes:
+        stock_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#E8F5E9")),
+                    ("TEXTCOLOR", (0, row_index), (-1, row_index), colors.HexColor("#1B5E20")),
+                ]
+            )
+        )
+    story.append(stock_table)
+    story.append(Spacer(1, 12))
+
+    movement_table_rows = [["Hora", "Produto", "Tipo", "Qtd", "Obs"]]
+    for movement, product in movement_rows[:80]:
+        movement_table_rows.append(
+            [
+                movement.created_at.strftime("%H:%M"),
+                str(product.name or ""),
+                str(movement.movement_type or ""),
+                _fmt_num(abs(float(movement.quantity or 0))),
+                str(movement.notes or movement.reference or ""),
+            ]
+        )
+    if len(movement_table_rows) == 1:
+        movement_table_rows.append(["-", "Sem movimentos hoje", "-", "0", "-"])
+
+    story.append(Paragraph("Movimentos do dia", styles["Heading3"]))
+    movement_table = Table(movement_table_rows, colWidths=[55, 170, 75, 55, 175])
+    movement_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(movement_table)
+
+    doc.build(story)
+    pdf_bytes = buffer.getvalue()
+    filename = f"Stock_Dia_{start_date.strftime('%Y%m%d')}.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
 
 
@@ -1603,7 +2250,7 @@ def get_finance_summary_excel(
     ws = wb.active
     ws.title = "Resumo Financeiro"
 
-    ws.append(["Período", f"{start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"])
+    ws.append(["Periodo", f"{start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"])
     ws.append([])
     ws.append(["Métrica", "Valor"])
     ws.append(["Entradas (vendas)", summary["gross_revenue"]])
@@ -1668,3 +2315,94 @@ def list_my_restaurants(
     current_user: User = Depends(get_current_user),
 ):
     return []
+
+
+# ===================================================================
+# Accounts (Contas)
+# ===================================================================
+
+@router.get("/accounts", response_model=List[schemas.PDVAccount])
+def list_accounts(
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.get_accounts(db, current_user.id, status)
+
+
+@router.post("/accounts", response_model=schemas.PDVAccount)
+def create_account(
+    data: schemas.PDVAccountCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.create_account(db, data, current_user.id)
+
+
+@router.get("/accounts/{account_id}", response_model=schemas.PDVAccount)
+def get_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.get_account(db, account_id, current_user.id)
+
+
+@router.put("/accounts/{account_id}", response_model=schemas.PDVAccount)
+def update_account(
+    account_id: int,
+    data: schemas.PDVAccountUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.update_account(db, account_id, data, current_user.id)
+
+
+@router.post("/accounts/{account_id}/items", response_model=schemas.PDVAccount)
+def add_account_items(
+    account_id: int,
+    items: List[schemas.PDVAccountItemCreate],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.add_items_to_account(db, account_id, items, current_user.id)
+
+
+@router.patch("/accounts/{account_id}/items/{item_id}", response_model=schemas.PDVAccount)
+def update_account_item(
+    account_id: int,
+    item_id: int,
+    data: schemas.PDVAccountItemUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.update_account_item(db, account_id, item_id, data, current_user.id)
+
+
+@router.delete("/accounts/{account_id}/items/{item_id}", response_model=schemas.PDVAccount)
+def remove_account_item(
+    account_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.remove_account_item(db, account_id, item_id, current_user.id)
+
+
+@router.post("/accounts/{account_id}/close", response_model=schemas.PDVAccount)
+def close_account(
+    account_id: int,
+    data: schemas.PDVAccountClose,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.close_account(db, account_id, data, current_user.id)
+
+
+@router.delete("/accounts/{account_id}")
+def delete_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return controller.delete_account(db, account_id, current_user.id)

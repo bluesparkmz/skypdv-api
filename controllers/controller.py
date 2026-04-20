@@ -8,7 +8,7 @@ from fastapi import HTTPException, status, UploadFile
 
 from models import (
     User, PDVTerminal, PDVTerminalUser, PDVTerminalRole, PDVSupplier, PDVProduct, PDVInventory,
-    PDVStockMovement, PDVCashRegister, PDVSale, PDVSaleItem,
+    PDVStockMovement, PDVCashRegister, PDVSale, PDVSaleItem, PDVAccount, PDVAccountItem,
     SourceType, MovementType, PaymentMethod, SaleType,
     PDVCategory, PDVPaymentMethod, PDVExpenseCategory, PDVExpense, PDVTerminalInvite, PDVTaxRecord
 )
@@ -341,18 +341,29 @@ def get_terminal_users(db: Session, terminal_id: int, user_id: int) -> List[dict
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
-    
-    if terminal.user_id != user_id and not check_terminal_permission(db, terminal_id, user_id, "can_manage_users"):
-        raise HTTPException(status_code=403, detail="You don't have permission to view terminal users")
+
+    is_owner = terminal.user_id == user_id
+    terminal_user = db.query(PDVTerminalUser).filter(
+        PDVTerminalUser.terminal_id == terminal_id,
+        PDVTerminalUser.user_id == user_id,
+        PDVTerminalUser.is_active == True,
+    ).first()
+
+    if not is_owner and not terminal_user:
+        raise HTTPException(status_code=403, detail="You don't have access to this terminal")
+
+    can_manage_users = is_owner or check_terminal_permission(db, terminal_id, user_id, "can_manage_users")
     
     terminal_users = db.query(PDVTerminalUser).filter(
         PDVTerminalUser.terminal_id == terminal_id
     ).all()
-    pending_invites = db.query(PDVTerminalInvite).filter(
-        PDVTerminalInvite.terminal_id == terminal_id,
-        PDVTerminalInvite.is_active == True,
-        PDVTerminalInvite.accepted_at.is_(None),
-    ).all()
+    pending_invites = []
+    if can_manage_users:
+        pending_invites = db.query(PDVTerminalInvite).filter(
+            PDVTerminalInvite.terminal_id == terminal_id,
+            PDVTerminalInvite.is_active == True,
+            PDVTerminalInvite.accepted_at.is_(None),
+        ).all()
     
     # Converter para dict com informaÃ§Ãµes do usuÃ¡rio
     result = []
@@ -827,6 +838,7 @@ def get_product_stats(db: Session, terminal_id: int):
         PDVProduct.category != ""
     ).distinct().count()
     
+<<<<<<< HEAD
     return schemas.PDVProductStats(
         total_products=total,
         active_products=active,
@@ -1010,6 +1022,134 @@ def adopt_shared_product(
 def create_product(db: Session, product: schemas.PDVProductCreate, terminal_id: int):
     _ensure_unique_product_name(db, terminal_id, product.name)
     # Verificar se supplier existe e pertence ao terminal
+=======
+    return schemas.PDVProductStats(
+        total_products=total,
+        active_products=active,
+        fastfood_products=fastfood,
+        local_products=local,
+        categories_count=categories_count
+    )
+
+
+def _normalize_product_name(name: str) -> str:
+    return " ".join((name or "").strip().lower().split())
+
+
+def _ensure_unique_product_name(db: Session, terminal_id: int, name: str, exclude_product_id: Optional[int] = None):
+    normalized_name = _normalize_product_name(name)
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Product name is required")
+
+    products = db.query(PDVProduct).filter(
+        PDVProduct.terminal_id == terminal_id,
+        PDVProduct.is_active == True,
+    ).all()
+
+    for product in products:
+        if exclude_product_id and product.id == exclude_product_id:
+            continue
+        if _normalize_product_name(product.name) == normalized_name:
+            raise HTTPException(status_code=400, detail="A product with this name already exists in your account")
+
+
+def get_shared_products(
+    db: Session,
+    terminal_id: int,
+    search: str = None,
+    category: str = None,
+    business_type: str = None,
+    limit: int = 100,
+    skip: int = 0,
+):
+    query = db.query(PDVProduct).filter(
+        PDVProduct.is_active == True,
+        PDVProduct.terminal_id != terminal_id,
+    )
+
+    if search:
+        query = query.filter(or_(
+            PDVProduct.name.ilike(f"%{search}%"),
+            PDVProduct.sku.ilike(f"%{search}%"),
+            PDVProduct.barcode.ilike(f"%{search}%")
+        ))
+
+    if category:
+        query = query.filter(PDVProduct.category == category)
+
+    if business_type == "restaurante":
+        query = query.filter(PDVProduct.is_fastfood == True)
+    elif business_type == "loja":
+        query = query.filter(PDVProduct.is_fastfood == False)
+
+    return query.order_by(PDVProduct.name.asc()).offset(skip).limit(limit).all()
+
+
+def adopt_shared_product(
+    db: Session,
+    terminal_id: int,
+    source_product_id: int,
+    price: Optional[Decimal] = None,
+    cost_price: Optional[Decimal] = None,
+    initial_stock: Optional[Decimal] = None,
+    initial_stock_location: str = "balcao",
+):
+    source_product = db.query(PDVProduct).filter(
+        PDVProduct.id == source_product_id,
+        PDVProduct.is_active == True,
+    ).first()
+    if not source_product:
+        raise HTTPException(status_code=404, detail="Source product not found")
+
+    if source_product.terminal_id == terminal_id:
+        raise HTTPException(status_code=400, detail="This product already belongs to your account")
+
+    _ensure_unique_product_name(db, terminal_id, source_product.name)
+
+    db_product = PDVProduct(
+        terminal_id=terminal_id,
+        shared_source_product_id=source_product.id,
+        supplier_id=None,
+        source_type=SourceType.LOCAL,
+        external_product_id=None,
+        name=source_product.name,
+        sku=source_product.sku,
+        barcode=source_product.barcode,
+        description=source_product.description,
+        category=source_product.category,
+        cost_price=cost_price if cost_price is not None else source_product.cost_price,
+        price=price if price is not None else source_product.price,
+        promotional_price=source_product.promotional_price,
+        image=source_product.image,
+        emoji=source_product.emoji,
+        is_fastfood=source_product.is_fastfood,
+        track_stock=source_product.track_stock,
+        allow_decimal_quantity=source_product.allow_decimal_quantity,
+    )
+    db.add(db_product)
+    db.commit()
+    db.refresh(db_product)
+
+    if db_product.track_stock:
+        qty = initial_stock if initial_stock is not None else Decimal("0.00")
+        inventory = PDVInventory(
+            product_id=db_product.id,
+            terminal_id=terminal_id,
+            quantity=qty,
+            min_quantity=Decimal("0.00"),
+            max_quantity=None,
+            reserved_quantity=Decimal("0.00"),
+            storage_location=initial_stock_location or CATEGORY_DEFAULT_STOCK_LOCATION,
+        )
+        db.add(inventory)
+        db.commit()
+    db.refresh(db_product)
+    return db_product
+
+def create_product(db: Session, product: schemas.PDVProductCreate, terminal_id: int):
+    _ensure_unique_product_name(db, terminal_id, product.name)
+    # Verificar se supplier existe e pertence ao terminal
+>>>>>>> e9c7b60eb1449b06f2a4b65492164f08f5ba104b
     supplier = None
     if product.supplier_id:
         supplier = db.query(PDVSupplier).filter(
@@ -1911,7 +2051,54 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
     db.add(sale)
     db.commit()
     db.refresh(sale)
-    
+
+    # Se troco nao foi entregue, criar uma conta fechada para registrar o troco
+    change_status = (sale_data.change_status or "given").strip().lower()
+    if change_status not in ("given", "not_given"):
+        raise HTTPException(status_code=400, detail="Invalid change status")
+    if change_status == "not_given" and effective_amount_paid > total:
+        display_name = _get_user_display_name(db, user_id)
+        account = PDVAccount(
+            terminal_id=terminal_id,
+            linked_sale_id=sale.id,
+            client_name=sale.customer_name or "Venda direta",
+            client_phone=sale.customer_phone,
+            status="closed",
+            current_balance=total,
+            amount_paid=effective_amount_paid,
+            change_amount=(effective_amount_paid - total),
+            change_status=change_status,
+            opened_by_user_id=user_id,
+            opened_by_name=display_name,
+            closed_by_user_id=user_id,
+            closed_by_name=display_name,
+            closed_at=datetime.utcnow(),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(account)
+        db.commit()
+        db.refresh(account)
+        # Itens da conta (espelha os itens da venda)
+        for item_obj in items_to_add:
+            product = item_obj["product"]
+            data = item_obj["data"]
+            unit_price = item_obj["unit_price"]
+            subtotal = item_obj["item_subtotal"]
+            account_item = PDVAccountItem(
+                account_id=account.id,
+                product_id=product.id,
+                product_name=product.name,
+                quantity=data.quantity,
+                unit_price=unit_price,
+                subtotal=subtotal,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+            db.add(account_item)
+        db.commit()
+        db.refresh(account)
+
     # 6. Criar Itens e Atualizar Estoque
     for item_obj in items_to_add:
         product = item_obj["product"]
@@ -3959,3 +4146,323 @@ async def upload_pdv_product_image(file: UploadFile) -> str:
             raise e
         raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(e)}")
 
+
+
+# ===================================================================
+# Accounts - Contas abertas/fechadas
+# ===================================================================
+
+def _get_user_display_name(db: Session, user_id: int) -> str | None:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None
+    return user.name or user.username or user.email
+
+
+def _account_to_dict(account: PDVAccount) -> dict:
+    return {
+        "id": account.id,
+        "terminal_id": account.terminal_id,
+        "linked_sale_id": account.linked_sale_id,
+        "client_name": account.client_name,
+        "client_phone": account.client_phone,
+        "status": account.status,
+        "current_balance": account.current_balance,
+        "amount_paid": account.amount_paid,
+        "change_amount": account.change_amount,
+        "change_status": account.change_status,
+        "opened_by_user_id": account.opened_by_user_id,
+        "opened_by_name": account.opened_by_name,
+        "closed_by_user_id": account.closed_by_user_id,
+        "closed_by_name": account.closed_by_name,
+        "notes": account.notes,
+        "closed_at": account.closed_at,
+        "created_at": account.created_at,
+        "updated_at": account.updated_at,
+        "items": [
+            {
+                "id": item.id,
+                "account_id": item.account_id,
+                "product_id": item.product_id,
+                "product_name": item.product_name,
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "subtotal": item.subtotal,
+                "created_at": item.created_at,
+                "updated_at": item.updated_at,
+            }
+            for item in account.items
+        ],
+    }
+
+
+def _recalculate_account_balance(account: PDVAccount) -> None:
+    total = Decimal("0.00")
+    for item in account.items:
+        total += item.subtotal or Decimal("0.00")
+    account.current_balance = total
+
+
+def get_accounts(db: Session, user_id: int, status: str | None = None) -> List[dict]:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    query = db.query(PDVAccount).filter(PDVAccount.terminal_id == terminal.id)
+    if status and status != "all":
+        query = query.filter(PDVAccount.status == status)
+    accounts = query.order_by(desc(PDVAccount.created_at)).all()
+    return [_account_to_dict(account) for account in accounts]
+
+
+def get_account(db: Session, account_id: int, user_id: int) -> dict:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    account = db.query(PDVAccount).filter(
+        PDVAccount.id == account_id,
+        PDVAccount.terminal_id == terminal.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return _account_to_dict(account)
+
+
+def create_account(db: Session, data: schemas.PDVAccountCreate, user_id: int) -> dict:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+
+    display_name = _get_user_display_name(db, user_id)
+    account = PDVAccount(
+        terminal_id=terminal.id,
+        client_name=data.client_name,
+        client_phone=data.client_phone,
+        notes=data.notes,
+        status="open",
+        current_balance=Decimal("0.00"),
+        opened_by_user_id=user_id,
+        opened_by_name=display_name,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+
+    if data.items:
+        add_items_to_account(db, account.id, data.items, user_id)
+        db.refresh(account)
+
+    return _account_to_dict(account)
+
+
+def add_items_to_account(db: Session, account_id: int, items: List[schemas.PDVAccountItemCreate], user_id: int) -> dict:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    account = db.query(PDVAccount).filter(
+        PDVAccount.id == account_id,
+        PDVAccount.terminal_id == terminal.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.status != "open":
+        raise HTTPException(status_code=400, detail="Account is closed")
+
+    for item_data in items:
+        product = db.query(PDVProduct).filter(
+            PDVProduct.id == item_data.product_id,
+            PDVProduct.terminal_id == terminal.id,
+            PDVProduct.is_active == True,
+        ).first()
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Product {item_data.product_id} not found")
+
+        unit_price = item_data.unit_price if item_data.unit_price is not None else product.price
+        subtotal = unit_price * item_data.quantity
+        account_item = PDVAccountItem(
+            account_id=account.id,
+            product_id=product.id,
+            product_name=product.name,
+            quantity=item_data.quantity,
+            unit_price=unit_price,
+            subtotal=subtotal,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(account_item)
+
+    db.commit()
+    db.refresh(account)
+    _recalculate_account_balance(account)
+    account.updated_at = datetime.utcnow()
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _account_to_dict(account)
+
+
+def update_account_item(db: Session, account_id: int, item_id: int, data: schemas.PDVAccountItemUpdate, user_id: int) -> dict:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    account = db.query(PDVAccount).filter(
+        PDVAccount.id == account_id,
+        PDVAccount.terminal_id == terminal.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.status != "open":
+        raise HTTPException(status_code=400, detail="Account is closed")
+
+    account_item = db.query(PDVAccountItem).filter(
+        PDVAccountItem.id == item_id,
+        PDVAccountItem.account_id == account.id,
+    ).first()
+    if not account_item:
+        raise HTTPException(status_code=404, detail="Account item not found")
+
+    quantity = data.quantity
+    account_item.quantity = quantity
+    account_item.subtotal = (account_item.unit_price or Decimal("0.00")) * quantity
+    account_item.updated_at = datetime.utcnow()
+    db.add(account_item)
+
+    _recalculate_account_balance(account)
+    account.updated_at = datetime.utcnow()
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _account_to_dict(account)
+
+
+def remove_account_item(db: Session, account_id: int, item_id: int, user_id: int) -> dict:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    account = db.query(PDVAccount).filter(
+        PDVAccount.id == account_id,
+        PDVAccount.terminal_id == terminal.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.status != "open":
+        raise HTTPException(status_code=400, detail="Account is closed")
+
+    account_item = db.query(PDVAccountItem).filter(
+        PDVAccountItem.id == item_id,
+        PDVAccountItem.account_id == account.id,
+    ).first()
+    if not account_item:
+        raise HTTPException(status_code=404, detail="Account item not found")
+
+    db.delete(account_item)
+    db.commit()
+
+    db.refresh(account)
+    _recalculate_account_balance(account)
+    account.updated_at = datetime.utcnow()
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _account_to_dict(account)
+
+
+def update_account(db: Session, account_id: int, data: schemas.PDVAccountUpdate, user_id: int) -> dict:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    account = db.query(PDVAccount).filter(
+        PDVAccount.id == account_id,
+        PDVAccount.terminal_id == terminal.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    updates = data.model_dump(exclude_unset=True)
+    if "change_status" in updates:
+        status_value = (updates.get("change_status") or "").strip().lower()
+        if status_value not in ("given", "not_given"):
+            raise HTTPException(status_code=400, detail="Invalid change status")
+        updates["change_status"] = status_value
+    for field, value in updates.items():
+        setattr(account, field, value)
+    account.updated_at = datetime.utcnow()
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _account_to_dict(account)
+
+
+def delete_account(db: Session, account_id: int, user_id: int) -> dict:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    account = db.query(PDVAccount).filter(
+        PDVAccount.id == account_id,
+        PDVAccount.terminal_id == terminal.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    db.delete(account)
+    db.commit()
+    return {"message": "Account deleted"}
+
+
+def close_account(db: Session, account_id: int, data: schemas.PDVAccountClose, user_id: int) -> dict:
+    terminal = get_terminal_required(db, user_id)
+    require_terminal_permission(db, terminal.id, user_id, "can_sell")
+    account = db.query(PDVAccount).filter(
+        PDVAccount.id == account_id,
+        PDVAccount.terminal_id == terminal.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.status != "open":
+        raise HTTPException(status_code=400, detail="Account is already closed")
+    if not account.items:
+        raise HTTPException(status_code=400, detail="Account has no products")
+
+    payment_method_value = data.payment_method.value if hasattr(data.payment_method, "value") else str(data.payment_method)
+    if payment_method_value == "pos":
+        payment_method_value = "card"
+
+    amount_paid = data.amount_paid
+    if amount_paid < account.current_balance:
+        raise HTTPException(status_code=400, detail="Amount paid cannot be lower than total")
+    change_amount = amount_paid - account.current_balance
+    change_status = (data.change_status or "not_given").strip().lower()
+    if change_status not in ("given", "not_given"):
+        raise HTTPException(status_code=400, detail="Invalid change status")
+
+    sale_items = [
+        schemas.PDVSaleItemCreate(
+            product_id=item.product_id,
+            quantity=item.quantity,
+            unit_price=item.unit_price,
+        )
+        for item in account.items
+    ]
+    sale = create_sale(
+        db,
+        schemas.PDVSaleCreate(
+            items=sale_items,
+            customer_name=account.client_name,
+            customer_phone=account.client_phone,
+            payment_method=payment_method_value,
+            amount_paid=amount_paid,
+            notes=account.notes or f"Conta #{account.id}",
+        ),
+        terminal.id,
+        user_id,
+    )
+
+    sale.external_order_id = account.id
+    sale.external_order_type = "account"
+    sale.notes = (sale.notes or "").strip() or f"Conta #{account.id}"
+    account.status = "closed"
+    account.amount_paid = amount_paid
+    account.change_amount = change_amount
+    account.change_status = change_status
+    account.closed_by_user_id = user_id
+    account.closed_by_name = _get_user_display_name(db, user_id)
+    account.closed_at = datetime.utcnow()
+    account.linked_sale_id = sale.id
+    account.updated_at = datetime.utcnow()
+    db.add(sale)
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _account_to_dict(account)
