@@ -7,6 +7,7 @@ from urllib.request import urlopen
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, or_
 from fastapi import HTTPException, status, UploadFile
+from PIL import Image as PILImage
 
 from models import (
     User, PDVTerminal, PDVTerminalUser, PDVTerminalRole, PDVSupplier, PDVProduct, PDVInventory,
@@ -4079,6 +4080,28 @@ def _format_invoice_number_display(value: Any) -> str:
     return digits or raw
 
 
+def _build_reportlab_image(source: str, width: int, height: int) -> ReportLabImage:
+    if str(source).startswith(("http://", "https://")):
+        raw_bytes = urlopen(str(source), timeout=8).read()
+    else:
+        with open(str(source), "rb") as f:
+            raw_bytes = f.read()
+
+    image = PILImage.open(BytesIO(raw_bytes))
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGBA")
+        background = PILImage.new("RGBA", image.size, (255, 255, 255, 255))
+        background.alpha_composite(image)
+        image = background.convert("RGB")
+    elif image.mode == "L":
+        image = image.convert("RGB")
+
+    output = BytesIO()
+    image.save(output, format="PNG")
+    output.seek(0)
+    return ReportLabImage(output, width=width, height=height)
+
+
 def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSaleItem]) -> bytes:
     """Gera PDF de fatura (A4) com dados do terminal, cliente e itens."""
     buffer = BytesIO()
@@ -4111,11 +4134,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
 
     if company_logo:
         try:
-            if str(company_logo).startswith(("http://", "https://")):
-                logo_bytes = urlopen(str(company_logo), timeout=5).read()
-                elements.append(ReportLabImage(BytesIO(logo_bytes), width=72, height=72))
-            else:
-                elements.append(ReportLabImage(str(company_logo), width=72, height=72))
+            elements.append(_build_reportlab_image(str(company_logo), width=72, height=72))
             elements.append(Spacer(1, 8))
         except Exception:
             pass
@@ -4212,11 +4231,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     if company_stamp:
         try:
             elements.append(Spacer(1, 12))
-            if str(company_stamp).startswith(("http://", "https://")):
-                stamp_bytes = urlopen(str(company_stamp), timeout=5).read()
-                stamp = ReportLabImage(BytesIO(stamp_bytes), width=96, height=96)
-            else:
-                stamp = ReportLabImage(str(company_stamp), width=96, height=96)
+            stamp = _build_reportlab_image(str(company_stamp), width=96, height=96)
             stamp_wrap = Table([["", stamp]], colWidths=[404, 96])
             stamp_wrap.setStyle(TableStyle([
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
