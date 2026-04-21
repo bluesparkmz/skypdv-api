@@ -4071,6 +4071,14 @@ def _extract_invoice_meta(notes: Optional[str]) -> dict[str, Any]:
     return {}
 
 
+def _format_invoice_number_display(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    return digits or raw
+
+
 def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSaleItem]) -> bytes:
     """Gera PDF de fatura (A4) com dados do terminal, cliente e itens."""
     buffer = BytesIO()
@@ -4091,6 +4099,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     company_contacts = invoice_meta.get("company_contacts") or terminal.phone or ""
     company_logo = invoice_meta.get("logo_url") or terminal.logo
     invoice_number = invoice_meta.get("invoice_number") or sale.id
+    invoice_number_display = _format_invoice_number_display(invoice_number)
     invoice_date = invoice_meta.get("invoice_date") or sale.created_at.strftime("%d/%m/%Y")
     client_name = invoice_meta.get("client_name") or sale.customer_name or "Consumidor Final"
     client_nuit = invoice_meta.get("client_nuit") or ""
@@ -4116,12 +4125,13 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         company_lines.append(f"Contactos: {company_contacts}")
     if terminal.address:
         company_lines.append(str(terminal.address))
+    if invoice_number_display:
+        company_lines.append(f"<br/><b>Fatura <font color='red'>{invoice_number_display}</font></b>")
+    company_lines.append(f"Data: {invoice_date}")
+    company_lines.append(f"Forma de pagamento: {payment_method_label}")
 
     invoice_lines = [
-        f"<b>Fatura No {invoice_number}</b>",
-        f"Data: {invoice_date}",
-        f"Forma de pagamento: {payment_method_label}",
-        "<br/><b>Cliente</b>",
+        "<b>Cliente</b>",
         f"Nome: {client_name}",
     ]
     if client_nuit:
