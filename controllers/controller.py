@@ -4286,7 +4286,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
     elements.append(table)
-    elements.append(Spacer(1, 12))
+    elements.append(Spacer(1, 6))
 
     summary_table = Table(
         [
@@ -4315,17 +4315,20 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
 
+    elements.append(summary_wrap)
+    elements.append(Spacer(1, 10))
+
     if company_stamp:
         try:
-            elements.append(Spacer(1, 12))
             stamp = _build_reportlab_image(str(company_stamp), width=96, height=96)
-            stamp_wrap = Table([[stamp, ""]], colWidths=[96, 404])
+            stamp_wrap = Table([["", stamp, ""]], colWidths=[202, 96, 202])
             stamp_wrap.setStyle(TableStyle([
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 0),
                 ("TOPPADDING", (0, 0), (-1, -1), 0),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("ALIGN", (1, 0), (1, 0), "CENTER"),
             ]))
             elements.append(stamp_wrap)
         except Exception as exc:
@@ -4335,8 +4338,6 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
                 company_stamp,
                 exc,
             )
-
-    elements.append(summary_wrap)
 
     doc.build(elements)
     pdf = buffer.getvalue()
