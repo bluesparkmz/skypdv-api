@@ -4100,6 +4100,29 @@ def _format_invoice_number_display(value: Any) -> str:
     return digits or raw
 
 
+def _normalize_payment_method_label(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "Dinheiro"
+
+    normalized = raw.lower()
+    if "." in normalized:
+        normalized = normalized.split(".")[-1]
+    normalized = normalized.replace("paymentmethodenum", "").replace("paymentmethod", "").strip(" :_-")
+
+    labels = {
+        "cash": "Dinheiro",
+        "card": "Cartao",
+        "bci_pos": "BCI POS",
+        "pos": "BCI POS",
+        "mpesa": "M-Pesa",
+        "skywallet": "E-Mola",
+        "emola": "E-Mola",
+        "mixed": "Misto",
+    }
+    return labels.get(normalized, raw)
+
+
 def _build_reportlab_image(source: str, width: int, height: int) -> ReportLabImage:
     logger.info("[invoice-pdf] Loading image source=%s width=%s height=%s", source, width, height)
     raw_bytes: bytes
@@ -4215,7 +4238,9 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     client_name = invoice_meta.get("client_name") or sale.customer_name or "Consumidor Final"
     client_nuit = invoice_meta.get("client_nuit") or ""
     client_address = invoice_meta.get("client_address") or ""
-    payment_method_label = invoice_meta.get("payment_method_label") or str(sale.payment_method)
+    payment_method_label = _normalize_payment_method_label(
+        invoice_meta.get("payment_method_label") or sale.payment_method
+    )
     tax_rate_label = invoice_meta.get("tax_rate") or "16"
 
     if company_logo:
@@ -4253,23 +4278,10 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     if sale.customer_phone:
         invoice_lines.append(f"Contactos: {sale.customer_phone}")
 
-    top_table = Table(
-        [
-            [
-                Paragraph("<br/>".join(company_lines), styles["Normal"]),
-                Paragraph("<br/>".join(invoice_lines), styles["Normal"]),
-            ]
-        ],
-        colWidths=[260, 240],
-    )
-    top_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    elements.append(top_table)
+    # Mantem os blocos alinhados a esquerda e com espaco visual entre empresa e cliente.
+    elements.append(Paragraph("<br/>".join(company_lines), styles["Normal"]))
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph("<br/>".join(invoice_lines), styles["Normal"]))
     elements.append(Spacer(1, 12))
 
     table_data = [["Item", "Qtd", "Preco Unit.", "Total"]]
@@ -4322,26 +4334,23 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     elements.append(summary_wrap)
     elements.append(Spacer(1, 10))
 
-    if company_stamp:
-        try:
-            stamp = _build_reportlab_image(str(company_stamp), width=96, height=96)
-            stamp_wrap = Table([["", stamp, ""]], colWidths=[202, 96, 202])
-            stamp_wrap.setStyle(TableStyle([
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-                ("ALIGN", (1, 0), (1, 0), "CENTER"),
-            ]))
-            elements.append(stamp_wrap)
-        except Exception as exc:
-            logger.exception(
-                "[invoice-pdf] Failed to render stamp for sale_id=%s source=%s error=%s",
-                sale.id,
-                company_stamp,
-                exc,
-            )
+    signature_area = Table(
+        [
+            ["Assinatura e Carimbo"],
+            ["\n\n\n"],
+            ["______________________________"],
+        ],
+        colWidths=[500],
+    )
+    signature_area.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("FONTNAME", (0, 0), (0, 0), "Helvetica-Bold"),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(signature_area)
 
     doc.build(elements)
     pdf = buffer.getvalue()
