@@ -4072,6 +4072,19 @@ def _extract_invoice_meta(notes: Optional[str]) -> dict[str, Any]:
     return {}
 
 
+def _extract_terminal_settings_dict(settings: Any) -> dict[str, Any]:
+    if isinstance(settings, dict):
+        return settings
+    if isinstance(settings, str):
+        try:
+            parsed = json.loads(settings)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    return {}
+
+
 def _format_invoice_number_display(value: Any) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -4117,7 +4130,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     elements: List[Any] = []
 
     invoice_meta = _extract_invoice_meta(sale.notes)
-    terminal_settings = terminal.settings if isinstance(terminal.settings, dict) else {}
+    terminal_settings = _extract_terminal_settings_dict(terminal.settings)
     company_name = (
         invoice_meta.get("company_name")
         or terminal_settings.get("invoice_company_name")
