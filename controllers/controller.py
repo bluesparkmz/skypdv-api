@@ -2,6 +2,8 @@
 from decimal import Decimal
 from typing import List, Optional, Any
 from io import BytesIO
+import json
+from urllib.request import urlopen
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, or_
 from fastapi import HTTPException, status, UploadFile
@@ -15,7 +17,7 @@ from models import (
 import schemas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as ReportLabImage
 from reportlab.lib.styles import getSampleStyleSheet
 from whatsapp_service import send_whatsapp_file, send_whatsapp_text
 
@@ -1998,7 +2000,8 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
     # total = subtotal_sem_iva * 1.16
     # subtotal_sem_iva = total / 1.16
     # iva = total - subtotal_sem_iva
-    TAX_RATE = Decimal("0.16")
+    configured_tax_rate = Decimal(str(terminal.tax_rate or Decimal("16.00")))
+    TAX_RATE = configured_tax_rate / Decimal("100.00")
     subtotal_without_tax = total_with_discount / (Decimal("1.00") + TAX_RATE)
     tax = total_with_discount - subtotal_without_tax
     
@@ -4056,6 +4059,18 @@ def mark_invoice_paid(db: Session, sale_id: int, terminal_id: int, user_id: int)
     return sale
 
 
+def _extract_invoice_meta(notes: Optional[str]) -> dict[str, Any]:
+    if not notes:
+        return {}
+    try:
+        payload = json.loads(notes)
+    except Exception:
+        return {}
+    if isinstance(payload, dict) and isinstance(payload.get("invoice_meta"), dict):
+        return payload["invoice_meta"]
+    return {}
+
+
 def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSaleItem]) -> bytes:
     """Gera PDF de fatura (A4) com dados do terminal, cliente e itens."""
     buffer = BytesIO()
@@ -4070,24 +4085,51 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     styles = getSampleStyleSheet()
     elements: List[Any] = []
 
-    elements.append(Paragraph(f"<b>{terminal.name}</b>", styles["Title"]))
+    invoice_meta = _extract_invoice_meta(sale.notes)
+    company_name = invoice_meta.get("company_name") or terminal.name
+    company_nuit = invoice_meta.get("company_nuit") or ""
+    company_contacts = invoice_meta.get("company_contacts") or terminal.phone or ""
+    company_logo = invoice_meta.get("logo_url") or terminal.logo
+    invoice_number = invoice_meta.get("invoice_number") or sale.id
+    invoice_date = invoice_meta.get("invoice_date") or sale.created_at.strftime("%d/%m/%Y")
+    client_name = invoice_meta.get("client_name") or sale.customer_name or "Consumidor Final"
+    client_nuit = invoice_meta.get("client_nuit") or ""
+    payment_method_label = invoice_meta.get("payment_method_label") or str(sale.payment_method)
+    tax_rate_label = invoice_meta.get("tax_rate") or "16"
+
+    if company_logo:
+        try:
+            if str(company_logo).startswith(("http://", "https://")):
+                logo_bytes = urlopen(str(company_logo), timeout=5).read()
+                elements.append(ReportLabImage(BytesIO(logo_bytes), width=72, height=72))
+            else:
+                elements.append(ReportLabImage(str(company_logo), width=72, height=72))
+            elements.append(Spacer(1, 8))
+        except Exception:
+            pass
+
+    elements.append(Paragraph(f"<b>{company_name}</b>", styles["Title"]))
+    if company_nuit:
+        elements.append(Paragraph(f"NUIT: {company_nuit}", styles["Normal"]))
+    if company_contacts:
+        elements.append(Paragraph(f"Contactos: {company_contacts}", styles["Normal"]))
     if terminal.address:
         elements.append(Paragraph(str(terminal.address), styles["Normal"]))
-    if terminal.phone:
-        elements.append(Paragraph(f"Tel: {terminal.phone}", styles["Normal"]))
     elements.append(Spacer(1, 12))
 
-    elements.append(Paragraph(f"Fatura NÂº {sale.id}", styles["Heading2"]))
-    elements.append(Paragraph(f"Data: {sale.created_at.strftime('%d/%m/%Y %H:%M')}", styles["Normal"]))
+    elements.append(Paragraph(f"Fatura NÂº {invoice_number}", styles["Heading2"]))
+    elements.append(Paragraph(f"Data: {invoice_date}", styles["Normal"]))
     status_label = "Pago" if sale.payment_status == "paid" else "Pendente"
     elements.append(Paragraph(f"Estado: {status_label}", styles["Normal"]))
+    elements.append(Paragraph(f"Forma de pagamento: {payment_method_label}", styles["Normal"]))
     elements.append(Spacer(1, 12))
 
-    customer = sale.customer_name or "Consumidor Final"
-    customer_phone = sale.customer_phone or "-"
     elements.append(Paragraph("<b>Cliente</b>", styles["Heading3"]))
-    elements.append(Paragraph(f"Nome: {customer}", styles["Normal"]))
-    elements.append(Paragraph(f"Telefone: {customer_phone}", styles["Normal"]))
+    elements.append(Paragraph(f"Nome: {client_name}", styles["Normal"]))
+    if client_nuit:
+        elements.append(Paragraph(f"NUIT: {client_nuit}", styles["Normal"]))
+    if sale.customer_phone:
+        elements.append(Paragraph(f"Contactos: {sale.customer_phone}", styles["Normal"]))
     elements.append(Spacer(1, 12))
 
     table_data = [["Item", "Qtd", "PreÃ§o Unit.", "Desconto", "Total"]]
@@ -4113,7 +4155,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
 
     elements.append(Paragraph("<b>Resumo</b>", styles["Heading3"]))
     elements.append(Paragraph(f"Subtotal (sem IVA): {sale.subtotal:.2f}", styles["Normal"]))
-    elements.append(Paragraph(f"IVA: {sale.tax_amount:.2f}", styles["Normal"]))
+    elements.append(Paragraph(f"IVA ({tax_rate_label}%): {sale.tax_amount:.2f}", styles["Normal"]))
     elements.append(Paragraph(f"Descontos: {sale.discount_amount:.2f}", styles["Normal"]))
     elements.append(Paragraph(f"<b>Total: {sale.total:.2f}</b>", styles["Normal"]))
     elements.append(Paragraph(f"Pago: {sale.amount_paid:.2f}", styles["Normal"]))
