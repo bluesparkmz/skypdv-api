@@ -405,6 +405,25 @@ class PDVCategorySalesSummary(BaseModel):
     items: List[PDVCategorySalesProductSummary]
 
 
+class PDVCategorySalesReportItem(BaseModel):
+    product_id: int
+    product_name: str
+    quantity_sold: Decimal
+    quantity_in: Decimal
+    total_amount: Decimal
+
+
+class PDVCategorySalesReport(BaseModel):
+    category: str
+    start_date: datetime
+    end_date: datetime
+    products_count: int
+    total_quantity_sold: Decimal
+    total_quantity_in: Decimal
+    total_amount: Decimal
+    items: List[PDVCategorySalesReportItem]
+
+
 # ===================================================================
 # Inventory Schemas - Esquemas para estoque
 # ===================================================================

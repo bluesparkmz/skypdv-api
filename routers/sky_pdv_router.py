@@ -229,6 +229,28 @@ def get_category_sales_summary_today(
     terminal = controller.get_terminal_required(db, current_user.id)
     return controller.get_category_sales_summary_today(db, terminal.id, category)
 
+
+@router.get("/products/category-report", response_model=schemas.PDVCategorySalesReport)
+def get_category_sales_report(
+    category: str,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    if not controller.is_terminal_admin(db, terminal.id, current_user.id):
+        user_id = current_user.id
+    return controller.get_category_sales_report(
+        db,
+        terminal.id,
+        category,
+        start_date=start_date,
+        end_date=end_date,
+        user_id=user_id,
+    )
+
 @router.post("/products", response_model=schemas.PDVProduct)
 def create_product(
     product: schemas.PDVProductCreate,

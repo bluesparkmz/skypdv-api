@@ -904,6 +904,133 @@ def get_category_sales_summary_today(db: Session, terminal_id: int, category: st
     )
 
 
+def get_category_sales_report(
+    db: Session,
+    terminal_id: int,
+    category: str,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    user_id: Optional[int] = None,
+):
+    if not category:
+        raise HTTPException(status_code=400, detail="Category is required")
+
+    now = datetime.now()
+    start_date = start_date or datetime(now.year, now.month, now.day, 0, 0, 0)
+    end_date = end_date or datetime(now.year, now.month, now.day, 23, 59, 59, 999999)
+
+    sales_query = (
+        db.query(
+            PDVSaleItem.product_id.label("product_id"),
+            PDVSaleItem.product_name.label("product_name"),
+            func.sum(PDVSaleItem.quantity).label("quantity_sold"),
+            func.sum(PDVSaleItem.subtotal).label("total_amount"),
+        )
+        .join(PDVSale, PDVSale.id == PDVSaleItem.sale_id)
+        .join(PDVProduct, PDVProduct.id == PDVSaleItem.product_id)
+        .filter(
+            PDVSale.terminal_id == terminal_id,
+            PDVSale.status == "completed",
+            PDVProduct.category == category,
+            PDVSale.created_at >= start_date,
+            PDVSale.created_at <= end_date,
+        )
+    )
+
+    if user_id is not None:
+        sales_query = sales_query.filter(PDVSale.created_by == user_id)
+
+    sales_rows = (
+        sales_query
+        .group_by(PDVSaleItem.product_id, PDVSaleItem.product_name)
+        .all()
+    )
+
+    entries_query = (
+        db.query(
+            PDVStockMovement.product_id.label("product_id"),
+            PDVProduct.name.label("product_name"),
+            func.sum(PDVStockMovement.quantity).label("quantity_in"),
+        )
+        .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
+        .filter(
+            PDVStockMovement.terminal_id == terminal_id,
+            PDVStockMovement.movement_type == MovementType.IN,
+            PDVProduct.category == category,
+            PDVStockMovement.created_at >= start_date,
+            PDVStockMovement.created_at <= end_date,
+        )
+    )
+
+    if user_id is not None:
+        entries_query = entries_query.filter(PDVStockMovement.created_by == user_id)
+
+    entry_rows = (
+        entries_query
+        .group_by(PDVStockMovement.product_id, PDVProduct.name)
+        .all()
+    )
+
+    items_map: dict[int, dict[str, Decimal | int | str]] = {}
+
+    for row in sales_rows:
+        items_map[row.product_id] = {
+            "product_id": row.product_id,
+            "product_name": row.product_name,
+            "quantity_sold": row.quantity_sold or Decimal("0.00"),
+            "quantity_in": Decimal("0.00"),
+            "total_amount": row.total_amount or Decimal("0.00"),
+        }
+
+    for row in entry_rows:
+        existing = items_map.get(row.product_id)
+        if existing:
+            existing["quantity_in"] = row.quantity_in or Decimal("0.00")
+            if not existing.get("product_name"):
+                existing["product_name"] = row.product_name
+            continue
+
+        items_map[row.product_id] = {
+            "product_id": row.product_id,
+            "product_name": row.product_name,
+            "quantity_sold": Decimal("0.00"),
+            "quantity_in": row.quantity_in or Decimal("0.00"),
+            "total_amount": Decimal("0.00"),
+        }
+
+    sorted_items = sorted(
+        items_map.values(),
+        key=lambda item: (
+            -(item["quantity_sold"] or Decimal("0.00")),
+            -(item["quantity_in"] or Decimal("0.00")),
+            -(item["total_amount"] or Decimal("0.00")),
+            str(item["product_name"] or "").lower(),
+        ),
+    )
+
+    items = [
+        schemas.PDVCategorySalesReportItem(
+            product_id=int(item["product_id"]),
+            product_name=str(item["product_name"]),
+            quantity_sold=item["quantity_sold"],
+            quantity_in=item["quantity_in"],
+            total_amount=item["total_amount"],
+        )
+        for item in sorted_items
+    ]
+
+    return schemas.PDVCategorySalesReport(
+        category=category,
+        start_date=start_date,
+        end_date=end_date,
+        products_count=len(items),
+        total_quantity_sold=sum((item.quantity_sold for item in items), Decimal("0.00")),
+        total_quantity_in=sum((item.quantity_in for item in items), Decimal("0.00")),
+        total_amount=sum((item.total_amount for item in items), Decimal("0.00")),
+        items=items,
+    )
+
+
 def _normalize_product_name(name: str) -> str:
     return " ".join((name or "").strip().lower().split())
 
