@@ -4334,23 +4334,10 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     elements.append(summary_wrap)
     elements.append(Spacer(1, 10))
 
-    signature_area = Table(
-        [
-            ["Assinatura e Carimbo"],
-            ["\n\n\n"],
-            ["______________________________"],
-        ],
-        colWidths=[500],
-    )
-    signature_area.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("FONTNAME", (0, 0), (0, 0), "Helvetica-Bold"),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-    ]))
-    elements.append(signature_area)
+    elements.append(Paragraph("Assinatura e Carimbo", styles["Normal"]))
+    elements.append(Paragraph("----------------------------", styles["Normal"]))
+    elements.append(Spacer(1, 14))
+    elements.append(Paragraph("----------------------------", styles["Normal"]))
 
     doc.build(elements)
     pdf = buffer.getvalue()
