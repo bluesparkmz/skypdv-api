@@ -4097,6 +4097,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     company_name = invoice_meta.get("company_name") or terminal.name
     company_nuit = invoice_meta.get("company_nuit") or ""
     company_contacts = invoice_meta.get("company_contacts") or terminal.phone or ""
+    company_location = invoice_meta.get("company_location") or ""
     company_logo = invoice_meta.get("logo_url") or terminal.logo
     invoice_number = invoice_meta.get("invoice_number") or sale.id
     invoice_number_display = _format_invoice_number_display(invoice_number)
@@ -4123,8 +4124,8 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         company_lines.append(f"NUIT: {company_nuit}")
     if company_contacts:
         company_lines.append(f"Contactos: {company_contacts}")
-    if terminal.address:
-        company_lines.append(str(terminal.address))
+    if company_location:
+        company_lines.append(str(company_location))
     if invoice_number_display:
         company_lines.append(f"<br/><b>Fatura <font color='red'>{invoice_number_display}</font></b>")
     company_lines.append(f"Data: {invoice_date}")
