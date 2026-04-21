@@ -3448,8 +3448,32 @@ def get_categories_list(db: Session, terminal_id: int):
         PDVCategory.is_active == True
     ).all()
     
+    # Contar produtos ativos por nome de categoria no terminal
+    product_count_rows = (
+        db.query(
+            PDVProduct.category,
+            func.count(PDVProduct.id).label("product_count"),
+        )
+        .filter(
+            PDVProduct.terminal_id == terminal_id,
+            PDVProduct.is_active == True,
+            PDVProduct.category.isnot(None),
+            PDVProduct.category != "",
+        )
+        .group_by(PDVProduct.category)
+        .all()
+    )
+    count_by_category_name = {
+        str(row[0]).strip().lower(): int(row[1] or 0)
+        for row in product_count_rows
+        if row[0]
+    }
+
     # Combinar e remover duplicatas
     all_categories = {cat.id: cat for cat in own_categories + global_categories}
+    for category in all_categories.values():
+        key = str(category.name or "").strip().lower()
+        setattr(category, "product_count", count_by_category_name.get(key, 0))
     return list(all_categories.values())
 
 def create_category(db: Session, category: schemas.PDVCategoryCreate, terminal_id: int, user_id: int, is_global: bool = False):
@@ -4123,6 +4147,15 @@ def _normalize_payment_method_label(value: Any) -> str:
     return labels.get(normalized, raw)
 
 
+def _normalize_invoice_tax_mode(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"yes", "true", "1", "incluido", "incluso"}:
+        return "IVA incluso no preco"
+    if normalized in {"no", "false", "0", "nao_incluso", "nao incluso"}:
+        return "IVA nao incluso no preco"
+    return "IVA incluso no preco"
+
+
 def _build_reportlab_image(source: str, width: int, height: int) -> ReportLabImage:
     logger.info("[invoice-pdf] Loading image source=%s width=%s height=%s", source, width, height)
     raw_bytes: bytes
@@ -4241,6 +4274,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     payment_method_label = _normalize_payment_method_label(
         invoice_meta.get("payment_method_label") or sale.payment_method
     )
+    tax_mode_label = _normalize_invoice_tax_mode(invoice_meta.get("tax_included_in_price"))
     tax_rate_label = invoice_meta.get("tax_rate") or "16"
 
     if company_logo:
@@ -4266,6 +4300,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         company_lines.append(f"<br/><b>Fatura <font color='red'>{invoice_number_display}</font></b>")
     company_lines.append(f"Data: {invoice_date}")
     company_lines.append(f"Forma de pagamento: {payment_method_label}")
+    company_lines.append(f"Regime de IVA: {tax_mode_label}")
 
     invoice_lines = [
         "<b>Cliente</b>",

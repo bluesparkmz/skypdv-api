@@ -850,6 +850,7 @@ class PDVCategory(PDVCategoryBase):
     is_global: bool = False
     created_by: Optional[int] = None
     is_active: bool
+    product_count: int = 0
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
