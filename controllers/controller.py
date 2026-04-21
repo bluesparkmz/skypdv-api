@@ -4117,12 +4117,38 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     elements: List[Any] = []
 
     invoice_meta = _extract_invoice_meta(sale.notes)
-    company_name = invoice_meta.get("company_name") or terminal.name
-    company_nuit = invoice_meta.get("company_nuit") or ""
-    company_contacts = invoice_meta.get("company_contacts") or terminal.phone or ""
-    company_location = invoice_meta.get("company_location") or ""
-    company_logo = invoice_meta.get("logo_url") or terminal.logo
-    company_stamp = invoice_meta.get("stamp_url") or ""
+    terminal_settings = terminal.settings if isinstance(terminal.settings, dict) else {}
+    company_name = (
+        invoice_meta.get("company_name")
+        or terminal_settings.get("invoice_company_name")
+        or terminal.name
+    )
+    company_nuit = (
+        invoice_meta.get("company_nuit")
+        or terminal_settings.get("invoice_nuit")
+        or ""
+    )
+    company_contacts = (
+        invoice_meta.get("company_contacts")
+        or terminal_settings.get("invoice_contacts")
+        or terminal.phone
+        or ""
+    )
+    company_location = (
+        invoice_meta.get("company_location")
+        or terminal_settings.get("invoice_location")
+        or ""
+    )
+    company_logo = (
+        invoice_meta.get("logo_url")
+        or terminal_settings.get("invoice_logo")
+        or terminal.logo
+    )
+    company_stamp = (
+        invoice_meta.get("stamp_url")
+        or terminal_settings.get("invoice_stamp")
+        or ""
+    )
     invoice_number = invoice_meta.get("invoice_number") or sale.id
     invoice_number_display = _format_invoice_number_display(invoice_number)
     invoice_date = invoice_meta.get("invoice_date") or sale.created_at.strftime("%d/%m/%Y")
