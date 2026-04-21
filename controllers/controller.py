@@ -234,8 +234,8 @@ def update_terminal(db: Session, terminal_id: int, updates: schemas.PDVTerminalU
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
-        
-    if terminal.user_id != user_id:
+
+    if terminal.user_id != user_id and not check_terminal_permission(db, terminal_id, user_id, "can_manage_users"):
         raise HTTPException(status_code=403, detail="Not authorized")
         
     for field, value in updates.dict(exclude_unset=True).items():
@@ -4208,7 +4208,6 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         ("TOPPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
-    elements.append(summary_wrap)
 
     if company_stamp:
         try:
@@ -4229,6 +4228,8 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
             elements.append(stamp_wrap)
         except Exception:
             pass
+
+    elements.append(summary_wrap)
 
     doc.build(elements)
     pdf = buffer.getvalue()
