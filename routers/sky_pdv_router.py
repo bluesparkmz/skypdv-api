@@ -209,7 +209,6 @@ def list_products(
 ):
     """Listar produtos com filtros (incluindo is_fastfood para FastFood)"""
     terminal = controller.get_terminal_required(db, current_user.id)
-<<<<<<< HEAD
     return controller.get_products(
         db, terminal.id, 
         search=search, 
@@ -232,20 +231,6 @@ def get_category_sales_summary_today(
 
 @router.post("/products", response_model=schemas.PDVProduct)
 def create_product(
-=======
-    return controller.get_products(
-        db, terminal.id, 
-        search=search, 
-        category=category, 
-        source_type=source_type,
-        is_fastfood=is_fastfood,
-        limit=limit,
-        skip=skip
-    )
-
-@router.post("/products", response_model=schemas.PDVProduct)
-def create_product(
->>>>>>> e9c7b60eb1449b06f2a4b65492164f08f5ba104b
     product: schemas.PDVProductCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
