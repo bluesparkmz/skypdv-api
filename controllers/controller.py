@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import List, Optional, Any
 from io import BytesIO
 import json
+import logging
 from urllib.request import urlopen
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, or_
@@ -31,6 +32,7 @@ FastFoodOrderItem = None
 PRIMARY_STOCK_LOCATION = "balcao"
 CATEGORY_DEFAULT_STOCK_LOCATION = "balcao"
 CASH_REGISTER_MAX_DURATION = timedelta(hours=24)
+logger = logging.getLogger(__name__)
 
 # ===================================================================
 # Terminals
@@ -4094,6 +4096,7 @@ def _format_invoice_number_display(value: Any) -> str:
 
 
 def _build_reportlab_image(source: str, width: int, height: int) -> ReportLabImage:
+    logger.info("[invoice-pdf] Loading image source=%s width=%s height=%s", source, width, height)
     if str(source).startswith(("http://", "https://")):
         raw_bytes = urlopen(str(source), timeout=8).read()
     else:
@@ -4162,6 +4165,14 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         or terminal_settings.get("invoice_stamp")
         or ""
     )
+    logger.info(
+        "[invoice-pdf] sale_id=%s invoice_meta=%s terminal_settings=%s resolved_logo=%s resolved_stamp=%s",
+        sale.id,
+        invoice_meta,
+        terminal_settings,
+        company_logo,
+        company_stamp,
+    )
     invoice_number = invoice_meta.get("invoice_number") or sale.id
     invoice_number_display = _format_invoice_number_display(invoice_number)
     invoice_date = invoice_meta.get("invoice_date") or sale.created_at.strftime("%d/%m/%Y")
@@ -4175,8 +4186,13 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         try:
             elements.append(_build_reportlab_image(str(company_logo), width=72, height=72))
             elements.append(Spacer(1, 8))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception(
+                "[invoice-pdf] Failed to render logo for sale_id=%s source=%s error=%s",
+                sale.id,
+                company_logo,
+                exc,
+            )
 
     company_lines = [f"<b>{company_name}</b>"]
     if company_nuit:
@@ -4280,8 +4296,13 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
             ]))
             elements.append(stamp_wrap)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception(
+                "[invoice-pdf] Failed to render stamp for sale_id=%s source=%s error=%s",
+                sale.id,
+                company_stamp,
+                exc,
+            )
 
     elements.append(summary_wrap)
 
