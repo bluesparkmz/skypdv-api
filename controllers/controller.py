@@ -4099,6 +4099,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     company_contacts = invoice_meta.get("company_contacts") or terminal.phone or ""
     company_location = invoice_meta.get("company_location") or ""
     company_logo = invoice_meta.get("logo_url") or terminal.logo
+    company_stamp = invoice_meta.get("stamp_url") or ""
     invoice_number = invoice_meta.get("invoice_number") or sale.id
     invoice_number_display = _format_invoice_number_display(invoice_number)
     invoice_date = invoice_meta.get("invoice_date") or sale.created_at.strftime("%d/%m/%Y")
@@ -4209,6 +4210,26 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     ]))
     elements.append(summary_wrap)
 
+    if company_stamp:
+        try:
+            elements.append(Spacer(1, 12))
+            if str(company_stamp).startswith(("http://", "https://")):
+                stamp_bytes = urlopen(str(company_stamp), timeout=5).read()
+                stamp = ReportLabImage(BytesIO(stamp_bytes), width=96, height=96)
+            else:
+                stamp = ReportLabImage(str(company_stamp), width=96, height=96)
+            stamp_wrap = Table([["", stamp]], colWidths=[404, 96])
+            stamp_wrap.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]))
+            elements.append(stamp_wrap)
+        except Exception:
+            pass
+
     doc.build(elements)
     pdf = buffer.getvalue()
     buffer.close()
@@ -4229,6 +4250,23 @@ async def upload_pdv_product_image(file: UploadFile) -> str:
     try:
         storage = StorageManager()
         return storage.upload_file(file, destination_folder=SKYPDV_PRODUCT_FOLDER)
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(e)}")
+
+
+async def upload_pdv_invoice_asset(file: UploadFile) -> str:
+    """
+    Upload an invoice asset image (logo or stamp) for SkyPDV.
+    """
+    if not file:
+        raise HTTPException(status_code=400, detail="No file sent")
+    from controllers.storage_manager import SKYPDV_INVOICE_FOLDER, StorageManager
+
+    try:
+        storage = StorageManager()
+        return storage.upload_file(file, destination_folder=SKYPDV_INVOICE_FOLDER)
     except Exception as e:
         if isinstance(e, HTTPException):
             raise e

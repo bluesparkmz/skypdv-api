@@ -319,6 +319,22 @@ async def upload_product_image(
     url = await controller.upload_pdv_product_image(file)
     return {"url": url}
 
+
+@router.post("/invoice-assets/upload")
+async def upload_invoice_asset(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Upload logo or stamp image for invoice settings.
+    """
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
+
+    url = await controller.upload_pdv_invoice_asset(file)
+    return {"url": url}
+
 @router.post("/products/search", response_model=List[schemas.PDVProduct])
 def search_products(
     search: schemas.PDVProductSearch,

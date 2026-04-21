@@ -25,6 +25,7 @@ R2_CONFIGURED = all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_B
 
 SKYPDV_PREFIX = "skypdv"
 SKYPDV_PRODUCT_FOLDER = f"{SKYPDV_PREFIX}/products"
+SKYPDV_INVOICE_FOLDER = f"{SKYPDV_PREFIX}/invoices"
 
 
 def _public_url(key: str) -> str:
