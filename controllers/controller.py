@@ -4108,40 +4108,54 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         except Exception:
             pass
 
-    elements.append(Paragraph(f"<b>{company_name}</b>", styles["Title"]))
+    company_lines = [f"<b>{company_name}</b>"]
     if company_nuit:
-        elements.append(Paragraph(f"NUIT: {company_nuit}", styles["Normal"]))
+        company_lines.append(f"NUIT: {company_nuit}")
     if company_contacts:
-        elements.append(Paragraph(f"Contactos: {company_contacts}", styles["Normal"]))
+        company_lines.append(f"Contactos: {company_contacts}")
     if terminal.address:
-        elements.append(Paragraph(str(terminal.address), styles["Normal"]))
-    elements.append(Spacer(1, 12))
+        company_lines.append(str(terminal.address))
 
-    elements.append(Paragraph(f"Fatura NÂº {invoice_number}", styles["Heading2"]))
-    elements.append(Paragraph(f"Data: {invoice_date}", styles["Normal"]))
-    status_label = "Pago" if sale.payment_status == "paid" else "Pendente"
-    elements.append(Paragraph(f"Estado: {status_label}", styles["Normal"]))
-    elements.append(Paragraph(f"Forma de pagamento: {payment_method_label}", styles["Normal"]))
-    elements.append(Spacer(1, 12))
-
-    elements.append(Paragraph("<b>Cliente</b>", styles["Heading3"]))
-    elements.append(Paragraph(f"Nome: {client_name}", styles["Normal"]))
+    invoice_lines = [
+        f"<b>Fatura No {invoice_number}</b>",
+        f"Data: {invoice_date}",
+        f"Forma de pagamento: {payment_method_label}",
+        "<br/><b>Cliente</b>",
+        f"Nome: {client_name}",
+    ]
     if client_nuit:
-        elements.append(Paragraph(f"NUIT: {client_nuit}", styles["Normal"]))
+        invoice_lines.append(f"NUIT: {client_nuit}")
     if sale.customer_phone:
-        elements.append(Paragraph(f"Contactos: {sale.customer_phone}", styles["Normal"]))
+        invoice_lines.append(f"Contactos: {sale.customer_phone}")
+
+    top_table = Table(
+        [
+            [
+                Paragraph("<br/>".join(company_lines), styles["Normal"]),
+                Paragraph("<br/>".join(invoice_lines), styles["Normal"]),
+            ]
+        ],
+        colWidths=[260, 240],
+    )
+    top_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    elements.append(top_table)
     elements.append(Spacer(1, 12))
 
-    table_data = [["Item", "Qtd", "PreÃ§o Unit.", "Desconto", "Total"]]
+    table_data = [["Item", "Qtd", "Preco Unit.", "Total"]]
     for item in items:
         table_data.append([
             item.product_name,
-            f"{item.quantity}",
-            f"{item.unit_price:.2f}",
-            f"{item.discount_amount:.2f}",
+            f"{Decimal(item.quantity):.2f}",
+            f"{Decimal(item.unit_price):.2f}",
             f"{item.subtotal:.2f}",
         ])
-    table = Table(table_data, colWidths=[210, 60, 80, 80, 80])
+    table = Table(table_data, colWidths=[250, 70, 90, 90])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
@@ -4153,13 +4167,33 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     elements.append(table)
     elements.append(Spacer(1, 12))
 
-    elements.append(Paragraph("<b>Resumo</b>", styles["Heading3"]))
-    elements.append(Paragraph(f"Subtotal (sem IVA): {sale.subtotal:.2f}", styles["Normal"]))
-    elements.append(Paragraph(f"IVA ({tax_rate_label}%): {sale.tax_amount:.2f}", styles["Normal"]))
-    elements.append(Paragraph(f"Descontos: {sale.discount_amount:.2f}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Total: {sale.total:.2f}</b>", styles["Normal"]))
-    elements.append(Paragraph(f"Pago: {sale.amount_paid:.2f}", styles["Normal"]))
-    elements.append(Paragraph(f"Troco: {sale.change_amount:.2f}", styles["Normal"]))
+    summary_table = Table(
+        [
+            ["SUB-TOTAL", f"{sale.subtotal:.2f}"],
+            [f"IVA {tax_rate_label}%", f"{sale.tax_amount:.2f}"],
+            ["TOTAL", f"{sale.total:.2f}"],
+        ],
+        colWidths=[120, 90],
+    )
+    summary_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("BACKGROUND", (0, 2), (-1, 2), colors.whitesmoke),
+    ]))
+
+    summary_wrap = Table(
+        [[ "", summary_table ]],
+        colWidths=[290, 210],
+    )
+    summary_wrap.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    elements.append(summary_wrap)
 
     doc.build(elements)
     pdf = buffer.getvalue()
