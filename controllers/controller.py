@@ -4319,7 +4319,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         try:
             elements.append(Spacer(1, 12))
             stamp = _build_reportlab_image(str(company_stamp), width=96, height=96)
-            stamp_wrap = Table([["", stamp]], colWidths=[404, 96])
+            stamp_wrap = Table([[stamp, ""]], colWidths=[96, 404])
             stamp_wrap.setStyle(TableStyle([
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
