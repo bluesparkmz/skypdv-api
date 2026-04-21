@@ -1940,6 +1940,10 @@ def list_cash_registers(
 
 def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int, user_id: int):
     # 1. Verificar caixa e terminal
+    terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
+    if not terminal:
+        raise HTTPException(status_code=404, detail="Terminal not found")
+
     register = get_current_register(db, terminal_id, user_id=user_id)
     if not register:
         raise HTTPException(status_code=400, detail="Cash register is closed. Please open register first.")
