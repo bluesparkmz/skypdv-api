@@ -4094,6 +4094,7 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     invoice_date = invoice_meta.get("invoice_date") or sale.created_at.strftime("%d/%m/%Y")
     client_name = invoice_meta.get("client_name") or sale.customer_name or "Consumidor Final"
     client_nuit = invoice_meta.get("client_nuit") or ""
+    client_address = invoice_meta.get("client_address") or ""
     payment_method_label = invoice_meta.get("payment_method_label") or str(sale.payment_method)
     tax_rate_label = invoice_meta.get("tax_rate") or "16"
 
@@ -4125,6 +4126,8 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     ]
     if client_nuit:
         invoice_lines.append(f"NUIT: {client_nuit}")
+    if client_address:
+        invoice_lines.append(f"Morada: {client_address}")
     if sale.customer_phone:
         invoice_lines.append(f"Contactos: {sale.customer_phone}")
 
