@@ -5,6 +5,7 @@ from io import BytesIO
 import json
 import logging
 from urllib.request import urlopen
+from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, or_
 from fastapi import HTTPException, status, UploadFile
@@ -4097,8 +4098,39 @@ def _format_invoice_number_display(value: Any) -> str:
 
 def _build_reportlab_image(source: str, width: int, height: int) -> ReportLabImage:
     logger.info("[invoice-pdf] Loading image source=%s width=%s height=%s", source, width, height)
+    raw_bytes: bytes
     if str(source).startswith(("http://", "https://")):
-        raw_bytes = urlopen(str(source), timeout=8).read()
+        try:
+            raw_bytes = urlopen(str(source), timeout=8).read()
+        except Exception as exc:
+            logger.warning("[invoice-pdf] Public image fetch failed for source=%s error=%s", source, exc)
+            try:
+                from controllers.storage_manager import R2_PUBLIC_URL, StorageManager
+
+                parsed_source = urlparse(str(source))
+                parsed_public = urlparse(str(R2_PUBLIC_URL))
+                same_host = parsed_source.netloc == parsed_public.netloc
+                if not same_host:
+                    raise
+
+                object_key = parsed_source.path.lstrip("/")
+                if not object_key:
+                    raise ValueError("Empty object key extracted from image URL")
+
+                storage = StorageManager()
+                response = storage.s3_client.get_object(
+                    Bucket=storage.bucket_name,
+                    Key=object_key,
+                )
+                raw_bytes = response["Body"].read()
+                logger.info("[invoice-pdf] Loaded image directly from R2 key=%s after public URL failure", object_key)
+            except Exception as storage_exc:
+                logger.exception(
+                    "[invoice-pdf] Failed fallback R2 fetch for source=%s error=%s",
+                    source,
+                    storage_exc,
+                )
+                raise exc
     else:
         with open(str(source), "rb") as f:
             raw_bytes = f.read()
