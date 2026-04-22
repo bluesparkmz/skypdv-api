@@ -3993,10 +3993,24 @@ def create_invoice(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: i
 
     sale_discount = sale_data.discount_amount + (subtotal * (sale_data.discount_percent / 100))
     total_with_discount = subtotal - sale_discount
-    TAX_RATE = Decimal("0.16")
-    subtotal_without_tax = total_with_discount / (Decimal("1.00") + TAX_RATE)
-    tax = total_with_discount - subtotal_without_tax
-    total = total_with_discount
+    invoice_meta = _extract_invoice_meta(sale_data.notes)
+    tax_included_in_price = str(invoice_meta.get("tax_included_in_price") or "").strip().lower() in {
+        "yes",
+        "true",
+        "1",
+        "incluido",
+        "incluso",
+    }
+
+    if tax_included_in_price:
+        subtotal_without_tax = total_with_discount
+        tax = Decimal("0.00")
+        total = total_with_discount
+    else:
+        TAX_RATE = Decimal("0.16")
+        subtotal_without_tax = total_with_discount / (Decimal("1.00") + TAX_RATE)
+        tax = total_with_discount - subtotal_without_tax
+        total = total_with_discount
 
     effective_amount_paid = sale_data.amount_paid or Decimal("0.00")
     payment_status = "paid" if effective_amount_paid >= total else "pending"
@@ -4275,6 +4289,13 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         invoice_meta.get("payment_method_label") or sale.payment_method
     )
     tax_mode_label = _normalize_invoice_tax_mode(invoice_meta.get("tax_included_in_price"))
+    tax_included_in_price = str(invoice_meta.get("tax_included_in_price") or "").strip().lower() in {
+        "yes",
+        "true",
+        "1",
+        "incluido",
+        "incluso",
+    }
     tax_rate_label = invoice_meta.get("tax_rate") or "16"
 
     if company_logo:
@@ -4339,14 +4360,21 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     elements.append(table)
     elements.append(Spacer(1, 6))
 
-    summary_table = Table(
+    summary_rows = (
+        [
+            ["SUB-TOTAL", f"{sale.total:.2f}"],
+            ["IVA Incluso", ""],
+            ["TOTAL", f"{sale.total:.2f}"],
+        ]
+        if tax_included_in_price
+        else
         [
             ["SUB-TOTAL", f"{sale.subtotal:.2f}"],
             [f"IVA {tax_rate_label}%", f"{sale.tax_amount:.2f}"],
             ["TOTAL", f"{sale.total:.2f}"],
-        ],
-        colWidths=[120, 90],
+        ]
     )
+    summary_table = Table(summary_rows, colWidths=[120, 90])
     summary_table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
         ("ALIGN", (1, 0), (1, -1), "RIGHT"),
