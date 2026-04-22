@@ -624,9 +624,13 @@ def list_invoices(
         status=status,
         user_id=filter_user_id
     )
+    # Faturas sao vendas que carregam invoice_meta no campo notes.
+    # Isso mantem separado o fluxo de venda comum/recibo termico.
+    invoice_sales = [sale for sale in sales if controller._extract_invoice_meta(sale.notes)]
+
     if payment_status:
-        sales = [s for s in sales if getattr(s, "payment_status", None) == payment_status]
-    return sales
+        invoice_sales = [s for s in invoice_sales if getattr(s, "payment_status", None) == payment_status]
+    return invoice_sales
 
 
 @router.get("/invoice-customers", response_model=List[schemas.PDVInvoiceCustomer])
@@ -682,12 +686,21 @@ def pay_invoice(
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
     controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
+    sale = db.query(PDVSale).filter(
+        PDVSale.id == invoice_id,
+        PDVSale.terminal_id == terminal.id
+    ).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if not controller._extract_invoice_meta(sale.notes):
+        raise HTTPException(status_code=400, detail="This sale is not an invoice")
     return controller.mark_invoice_paid(db, invoice_id, terminal.id, current_user.id)
 
 @router.get("/invoices/{invoice_id}/pdf")
 def get_invoice_pdf(
     invoice_id: int,
     phone: Optional[str] = None,
+    document_type: str = Query("invoice", pattern="^(invoice|receipt)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -699,15 +712,23 @@ def get_invoice_pdf(
     ).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    if not controller._extract_invoice_meta(sale.notes):
+        raise HTTPException(status_code=400, detail="This sale is not an invoice")
     if not controller.is_terminal_admin(db, terminal.id, current_user.id) and sale.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not allowed")
 
     items = db.query(PDVSaleItem).filter(PDVSaleItem.sale_id == sale.id).all()
-    pdf_bytes = controller.generate_invoice_pdf(sale, terminal, items)
-    filename = f"fatura-{sale.id}.pdf"
+    if document_type == "receipt":
+        pdf_bytes = controller.generate_receipt_pdf(sale, terminal, items)
+        filename = f"recibo-{sale.id}.pdf"
+        whatsapp_caption = "Recibo SkyPDV"
+    else:
+        pdf_bytes = controller.generate_invoice_pdf(sale, terminal, items)
+        filename = f"fatura-{sale.id}.pdf"
+        whatsapp_caption = "Fatura SkyPDV"
 
     if phone:
-        send_whatsapp_file(phone, filename, "application/pdf", pdf_bytes, caption="Fatura SkyPDV")
+        send_whatsapp_file(phone, filename, "application/pdf", pdf_bytes, caption=whatsapp_caption)
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

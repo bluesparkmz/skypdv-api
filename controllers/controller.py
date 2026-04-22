@@ -4513,6 +4513,163 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     buffer.close()
     return pdf
 
+
+def generate_receipt_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSaleItem]) -> bytes:
+    """Gera PDF de recibo em formato corrido, baseado no modelo fisico enviado pelo utilizador."""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=36,
+        bottomMargin=36,
+    )
+    styles = getSampleStyleSheet()
+    elements: List[Any] = []
+
+    invoice_meta = _extract_invoice_meta(sale.notes)
+    terminal_settings = _extract_terminal_settings_dict(terminal.settings)
+
+    company_name = (
+        invoice_meta.get("company_name")
+        or terminal_settings.get("invoice_company_name")
+        or terminal.name
+    )
+    company_nuit = (
+        invoice_meta.get("company_nuit")
+        or terminal_settings.get("invoice_nuit")
+        or ""
+    )
+    company_contacts = (
+        invoice_meta.get("company_contacts")
+        or terminal_settings.get("invoice_contacts")
+        or terminal.phone
+        or ""
+    )
+    company_location = (
+        invoice_meta.get("company_location")
+        or terminal_settings.get("invoice_location")
+        or ""
+    )
+    company_logo = (
+        invoice_meta.get("logo_url")
+        or terminal_settings.get("invoice_logo")
+        or terminal.logo
+    )
+    company_stamp = (
+        invoice_meta.get("stamp_url")
+        or terminal_settings.get("invoice_stamp")
+        or ""
+    )
+    invoice_number = invoice_meta.get("invoice_number") or sale.id
+    invoice_number_display = _format_invoice_number_display(invoice_number)
+    invoice_date = invoice_meta.get("invoice_date") or sale.created_at.strftime("%d/%m/%Y")
+    client_name = invoice_meta.get("client_name") or sale.customer_name or "Consumidor Final"
+    payment_method_label_raw = invoice_meta.get("payment_method_label") or sale.payment_method
+    payment_method_label = _normalize_payment_method_label(payment_method_label_raw)
+
+    if company_logo:
+        try:
+            elements.append(_build_reportlab_image(str(company_logo), width=60, height=60))
+            elements.append(Spacer(1, 6))
+        except Exception as exc:
+            logger.exception(
+                "[receipt-pdf] Failed to render logo for sale_id=%s source=%s error=%s",
+                sale.id,
+                company_logo,
+                exc,
+            )
+
+    company_box_lines = [f"<b>{company_name}</b>"]
+    if company_nuit:
+        company_box_lines.append(f"N.U.I.T: {company_nuit}")
+    if company_contacts:
+        company_box_lines.append(f"Cell: {company_contacts}")
+    if company_location:
+        company_box_lines.append(company_location)
+
+    company_box = Table(
+        [[Paragraph("<br/>".join(company_box_lines), styles["Normal"])]],
+        colWidths=[240],
+    )
+    company_box.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.8, colors.black),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+
+    receipt_header = Paragraph(
+        f"<b>RECIBO <font color='red'>{invoice_number_display}</font></b><br/>Data: {invoice_date}",
+        styles["Title"],
+    )
+    top_row = Table([[company_box, receipt_header]], colWidths=[250, 250])
+    top_row.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    elements.append(top_row)
+    elements.append(Spacer(1, 12))
+
+    elements.append(Paragraph(f"Recebi(emos) do(a) Sr.(es): <b>{client_name}</b>", styles["Normal"]))
+    elements.append(Spacer(1, 4))
+    elements.append(Paragraph(f"a quantia de: <b>{sale.total:.2f} MT</b>", styles["Normal"]))
+    elements.append(Spacer(1, 4))
+    elements.append(Paragraph(
+        f"Proveniente no pagamento de: <b>Fatura {invoice_number_display}</b>",
+        styles["Normal"],
+    ))
+    elements.append(Spacer(1, 8))
+    elements.append(Paragraph("de que, passamos o presente recibo.", styles["Normal"]))
+    elements.append(Spacer(1, 10))
+
+    method = str(payment_method_label_raw or "").lower()
+    is_cash = method in {"cash", "dinheiro", "numerario"}
+    is_bank = method in {"card", "mpesa", "skywallet", "banco"}
+    is_cheque = method in {"cheque"}
+    payment_line = (
+        f"({'X' if is_cash else ' '}) Numerario    "
+        f"({'X' if is_cheque else ' '}) Cheque No __________    "
+        f"({'X' if is_bank else ' '}) Banco"
+    )
+    elements.append(Paragraph(payment_line, styles["Normal"]))
+    elements.append(Spacer(1, 8))
+    elements.append(Paragraph(f"Forma de pagamento: {payment_method_label}", styles["Normal"]))
+    elements.append(Spacer(1, 24))
+    elements.append(Paragraph("Assinatura e Carimbo: ________________________________", styles["Normal"]))
+
+    if company_stamp:
+        try:
+            elements.append(Spacer(1, 8))
+            stamp = _build_reportlab_image(str(company_stamp), width=96, height=96)
+            stamp_wrap = Table([["", stamp]], colWidths=[404, 96])
+            stamp_wrap.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]))
+            elements.append(stamp_wrap)
+        except Exception as exc:
+            logger.exception(
+                "[receipt-pdf] Failed to render stamp for sale_id=%s source=%s error=%s",
+                sale.id,
+                company_stamp,
+                exc,
+            )
+
+    doc.build(elements)
+    pdf = buffer.getvalue()
+    buffer.close()
+    return pdf
+
 # ===================================================================
 # Image Upload
 # ===================================================================
