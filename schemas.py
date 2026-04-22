@@ -634,6 +634,27 @@ class PDVSaleVoid(BaseModel):
     refund_to_wallet: bool = False  # Se deve devolver para SkyWallet
 
 
+class PDVInvoiceCustomerCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    nuit: Optional[str] = Field(default=None, max_length=64)
+    phone: Optional[str] = Field(default=None, max_length=64)
+    address: Optional[str] = Field(default=None, max_length=500)
+
+
+class PDVInvoiceCustomer(BaseModel):
+    id: int
+    terminal_id: int
+    name: str
+    nuit: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    is_active: bool
+    created_by: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ===================================================================
 # Accounts Schemas - Contas abertas/fechadas
 # ===================================================================

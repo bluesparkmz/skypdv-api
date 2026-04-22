@@ -86,6 +86,7 @@ class PDVTerminal(Base):
     cash_registers = relationship("PDVCashRegister", back_populates="terminal", cascade="all, delete-orphan")
     sales = relationship("PDVSale", back_populates="terminal", cascade="all, delete-orphan")
     accounts = relationship("PDVAccount", back_populates="terminal", cascade="all, delete-orphan")
+    invoice_customers = relationship("PDVInvoiceCustomer", back_populates="terminal", cascade="all, delete-orphan")
 
 
 class PDVTerminalUser(Base):
@@ -319,6 +320,24 @@ class PDVSaleItem(Base):
 
     sale = relationship("PDVSale", back_populates="items")
     product = relationship("PDVProduct", back_populates="sale_items")
+
+
+class PDVInvoiceCustomer(Base):
+    __tablename__ = "pdv_invoice_customers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    nuit = Column(String(64), nullable=True)
+    phone = Column(String(64), nullable=True)
+    address = Column(String(500), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    terminal = relationship("PDVTerminal", back_populates="invoice_customers")
+    creator = relationship("User", foreign_keys=[created_by], backref="pdv_invoice_customers_created")
 
 
 class PDVAccount(Base):

@@ -15,7 +15,8 @@ from models import (
     User, PDVTerminal, PDVTerminalUser, PDVTerminalRole, PDVSupplier, PDVProduct, PDVInventory,
     PDVStockMovement, PDVCashRegister, PDVSale, PDVSaleItem, PDVAccount, PDVAccountItem,
     SourceType, MovementType, PaymentMethod, SaleType,
-    PDVCategory, PDVPaymentMethod, PDVExpenseCategory, PDVExpense, PDVTerminalInvite, PDVTaxRecord
+    PDVCategory, PDVPaymentMethod, PDVExpenseCategory, PDVExpense, PDVTerminalInvite, PDVTaxRecord,
+    PDVInvoiceCustomer
 )
 import schemas
 from reportlab.lib.pagesizes import A4
@@ -4083,6 +4084,55 @@ def create_invoice(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: i
     db.commit()
     db.refresh(sale)
     return sale
+
+
+def list_invoice_customers(db: Session, terminal_id: int) -> List[PDVInvoiceCustomer]:
+    return (
+        db.query(PDVInvoiceCustomer)
+        .filter(
+            PDVInvoiceCustomer.terminal_id == terminal_id,
+            PDVInvoiceCustomer.is_active == True,
+        )
+        .order_by(desc(PDVInvoiceCustomer.created_at))
+        .all()
+    )
+
+
+def create_invoice_customer(
+    db: Session,
+    payload: schemas.PDVInvoiceCustomerCreate,
+    terminal_id: int,
+    user_id: int,
+) -> PDVInvoiceCustomer:
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Customer name is required")
+
+    existing = (
+        db.query(PDVInvoiceCustomer)
+        .filter(
+            PDVInvoiceCustomer.terminal_id == terminal_id,
+            func.lower(PDVInvoiceCustomer.name) == name.lower(),
+            PDVInvoiceCustomer.phone == (payload.phone or "").strip(),
+            PDVInvoiceCustomer.is_active == True,
+        )
+        .first()
+    )
+    if existing:
+        return existing
+
+    customer = PDVInvoiceCustomer(
+        terminal_id=terminal_id,
+        name=name,
+        nuit=(payload.nuit or "").strip() or None,
+        phone=(payload.phone or "").strip() or None,
+        address=(payload.address or "").strip() or None,
+        created_by=user_id,
+    )
+    db.add(customer)
+    db.commit()
+    db.refresh(customer)
+    return customer
 
 def mark_invoice_paid(db: Session, sale_id: int, terminal_id: int, user_id: int):
     terminal = get_terminal_required(db, user_id)

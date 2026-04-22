@@ -628,6 +628,28 @@ def list_invoices(
         sales = [s for s in sales if getattr(s, "payment_status", None) == payment_status]
     return sales
 
+
+@router.get("/invoice-customers", response_model=List[schemas.PDVInvoiceCustomer])
+def list_invoice_customers(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
+    return controller.list_invoice_customers(db, terminal.id)
+
+
+@router.post("/invoice-customers", response_model=schemas.PDVInvoiceCustomer)
+def create_invoice_customer(
+    payload: schemas.PDVInvoiceCustomerCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
+    return controller.create_invoice_customer(db, payload, terminal.id, current_user.id)
+
+
 @router.post("/invoices/{invoice_id}/pay", response_model=schemas.PDVSale)
 def pay_invoice(
     invoice_id: int,
