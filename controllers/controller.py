@@ -4134,6 +4134,62 @@ def create_invoice_customer(
     db.refresh(customer)
     return customer
 
+
+def update_invoice_customer(
+    db: Session,
+    customer_id: int,
+    payload: schemas.PDVInvoiceCustomerUpdate,
+    terminal_id: int,
+) -> PDVInvoiceCustomer:
+    customer = (
+        db.query(PDVInvoiceCustomer)
+        .filter(
+            PDVInvoiceCustomer.id == customer_id,
+            PDVInvoiceCustomer.terminal_id == terminal_id,
+            PDVInvoiceCustomer.is_active == True,
+        )
+        .first()
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Invoice customer not found")
+
+    if payload.name is not None:
+        normalized_name = payload.name.strip()
+        if not normalized_name:
+            raise HTTPException(status_code=400, detail="Customer name is required")
+        customer.name = normalized_name
+    if payload.nuit is not None:
+        customer.nuit = (payload.nuit or "").strip() or None
+    if payload.phone is not None:
+        customer.phone = (payload.phone or "").strip() or None
+    if payload.address is not None:
+        customer.address = (payload.address or "").strip() or None
+
+    db.commit()
+    db.refresh(customer)
+    return customer
+
+
+def delete_invoice_customer(
+    db: Session,
+    customer_id: int,
+    terminal_id: int,
+) -> None:
+    customer = (
+        db.query(PDVInvoiceCustomer)
+        .filter(
+            PDVInvoiceCustomer.id == customer_id,
+            PDVInvoiceCustomer.terminal_id == terminal_id,
+            PDVInvoiceCustomer.is_active == True,
+        )
+        .first()
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Invoice customer not found")
+
+    customer.is_active = False
+    db.commit()
+
 def mark_invoice_paid(db: Session, sale_id: int, terminal_id: int, user_id: int):
     terminal = get_terminal_required(db, user_id)
     require_terminal_permission(db, terminal.id, user_id, "can_sell")

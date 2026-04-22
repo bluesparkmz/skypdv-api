@@ -641,6 +641,13 @@ class PDVInvoiceCustomerCreate(BaseModel):
     address: Optional[str] = Field(default=None, max_length=500)
 
 
+class PDVInvoiceCustomerUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    nuit: Optional[str] = Field(default=None, max_length=64)
+    phone: Optional[str] = Field(default=None, max_length=64)
+    address: Optional[str] = Field(default=None, max_length=500)
+
+
 class PDVInvoiceCustomer(BaseModel):
     id: int
     terminal_id: int

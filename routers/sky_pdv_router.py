@@ -650,6 +650,30 @@ def create_invoice_customer(
     return controller.create_invoice_customer(db, payload, terminal.id, current_user.id)
 
 
+@router.put("/invoice-customers/{customer_id}", response_model=schemas.PDVInvoiceCustomer)
+def update_invoice_customer(
+    customer_id: int,
+    payload: schemas.PDVInvoiceCustomerUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
+    return controller.update_invoice_customer(db, customer_id, payload, terminal.id)
+
+
+@router.delete("/invoice-customers/{customer_id}")
+def delete_invoice_customer(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
+    controller.delete_invoice_customer(db, customer_id, terminal.id)
+    return {"message": "Invoice customer deleted"}
+
+
 @router.post("/invoices/{invoice_id}/pay", response_model=schemas.PDVSale)
 def pay_invoice(
     invoice_id: int,
