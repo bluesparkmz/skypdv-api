@@ -4582,6 +4582,12 @@ def generate_receipt_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         or terminal.phone
         or ""
     ).strip()
+    company_logo = str(
+        invoice_meta.get("logo_url")
+        or terminal_settings.get("invoice_logo")
+        or terminal.logo
+        or ""
+    ).strip()
     company_location = str(
         invoice_meta.get("company_location")
         or terminal_settings.get("invoice_location")
@@ -4644,19 +4650,28 @@ def generate_receipt_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     pdf.rect(x0, y0, w, h)
 
     box_w = 62 * mm
-    box_h = 32 * mm
+    box_h = 36 * mm
     box_x = x0 + w - box_w - pad
     box_y = y0 + h - box_h - pad
     pdf.setLineWidth(0.5)
     pdf.rect(box_x, box_y, box_w, box_h)
 
+    logo_bottom_y = box_y + box_h - 18 * mm
+    if company_logo:
+        try:
+            logo = _build_reportlab_image(str(company_logo), width=20 * mm, height=12 * mm)
+            logo.drawOn(pdf, box_x + (box_w - 20 * mm) / 2, logo_bottom_y)
+        except Exception as exc:
+            logger.exception(
+                "[receipt-pdf] Failed to render company logo for sale_id=%s source=%s error=%s",
+                sale.id,
+                company_logo,
+                exc,
+            )
+
     pdf.setFont("Helvetica-Bold", 14)
     pdf.setFillColor(laranja)
-    pdf.drawCentredString(box_x + box_w / 2, box_y + box_h - 9 * mm, (company_name or "RECIBO").upper())
-
-    pdf.setFont("Helvetica", 6)
-    pdf.setFillColor(laranja)
-    pdf.drawCentredString(box_x + box_w / 2, box_y + box_h - 13 * mm, "ENGENHARIA & SERVICOS")
+    pdf.drawCentredString(box_x + box_w / 2, box_y + box_h - 22 * mm, (company_name or "").upper())
 
     company_lines: List[str] = []
     if company_nuit:
@@ -4669,7 +4684,7 @@ def generate_receipt_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
 
     pdf.setFont("Helvetica", 7)
     pdf.setFillColor(preto)
-    ty = box_y + box_h - 17 * mm
+    ty = box_y + box_h - 26 * mm
     for line in company_lines:
         pdf.drawCentredString(box_x + box_w / 2, ty, line)
         ty -= 3.5 * mm
