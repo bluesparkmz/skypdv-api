@@ -696,6 +696,17 @@ def pay_invoice(
         raise HTTPException(status_code=400, detail="This sale is not an invoice")
     return controller.mark_invoice_paid(db, invoice_id, terminal.id, current_user.id)
 
+
+@router.post("/invoices/{invoice_id}/generate-receipt", response_model=schemas.PDVSale)
+def generate_invoice_receipt(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
+    return controller.mark_invoice_receipt_generated(db, invoice_id, terminal.id, current_user.id)
+
 @router.get("/invoices/{invoice_id}/pdf")
 def get_invoice_pdf(
     invoice_id: int,

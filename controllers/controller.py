@@ -21,8 +21,11 @@ from models import (
 import schemas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
+from reportlab.lib.units import mm
+from reportlab.lib.colors import HexColor
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as ReportLabImage
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.pdfgen import canvas
 from whatsapp_service import send_whatsapp_file, send_whatsapp_text
 
 Restaurant = None
@@ -4211,6 +4214,49 @@ def mark_invoice_paid(db: Session, sale_id: int, terminal_id: int, user_id: int)
     return sale
 
 
+def mark_invoice_receipt_generated(db: Session, sale_id: int, terminal_id: int, user_id: int):
+    sale = db.query(PDVSale).filter(
+        PDVSale.id == sale_id,
+        PDVSale.terminal_id == terminal_id
+    ).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    invoice_meta = _extract_invoice_meta(sale.notes)
+    if not invoice_meta:
+        raise HTTPException(status_code=400, detail="This sale is not an invoice")
+    if sale.payment_status != "paid":
+        raise HTTPException(status_code=400, detail="Only paid invoices can generate receipts")
+
+    payload: dict[str, Any]
+    if sale.notes:
+        try:
+            parsed = json.loads(sale.notes)
+            payload = parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            payload = {}
+    else:
+        payload = {}
+
+    current_meta = payload.get("invoice_meta")
+    if not isinstance(current_meta, dict):
+        current_meta = {}
+
+    if not current_meta.get("receipt_generated_at"):
+        current_meta["receipt_generated_at"] = datetime.utcnow().isoformat()
+    current_meta["receipt_generated_by"] = str(user_id)
+    current_meta["receipt_invoice_number"] = str(
+        current_meta.get("invoice_number") or sale.id
+    )
+
+    payload["invoice_meta"] = current_meta
+    sale.notes = json.dumps(payload)
+
+    db.commit()
+    db.refresh(sale)
+    return sale
+
+
 def _extract_invoice_meta(notes: Optional[str]) -> dict[str, Any]:
     if not notes:
         return {}
@@ -4515,148 +4561,236 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
 
 
 def generate_receipt_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSaleItem]) -> bytes:
-    """Gera PDF de recibo em formato corrido, baseado no modelo fisico enviado pelo utilizador."""
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        leftMargin=36,
-        rightMargin=36,
-        topMargin=36,
-        bottomMargin=36,
-    )
-    styles = getSampleStyleSheet()
-    elements: List[Any] = []
-
+    """Gera um recibo A4 no modelo ENGEPOWER, com uma unica via por pagina."""
     invoice_meta = _extract_invoice_meta(sale.notes)
     terminal_settings = _extract_terminal_settings_dict(terminal.settings)
 
-    company_name = (
+    company_name = str(
         invoice_meta.get("company_name")
         or terminal_settings.get("invoice_company_name")
         or terminal.name
-    )
-    company_nuit = (
+        or ""
+    ).strip()
+    company_nuit = str(
         invoice_meta.get("company_nuit")
         or terminal_settings.get("invoice_nuit")
         or ""
-    )
-    company_contacts = (
+    ).strip()
+    company_contacts = str(
         invoice_meta.get("company_contacts")
         or terminal_settings.get("invoice_contacts")
         or terminal.phone
         or ""
-    )
-    company_location = (
+    ).strip()
+    company_location = str(
         invoice_meta.get("company_location")
         or terminal_settings.get("invoice_location")
         or ""
-    )
-    company_logo = (
-        invoice_meta.get("logo_url")
-        or terminal_settings.get("invoice_logo")
-        or terminal.logo
-    )
-    company_stamp = (
+    ).strip()
+    company_stamp = str(
         invoice_meta.get("stamp_url")
         or terminal_settings.get("invoice_stamp")
         or ""
-    )
+    ).strip()
+
     invoice_number = invoice_meta.get("invoice_number") or sale.id
+    receipt_number_raw = invoice_meta.get("receipt_invoice_number") or invoice_number
+    receipt_number_display = _format_invoice_number_display(receipt_number_raw)
     invoice_number_display = _format_invoice_number_display(invoice_number)
-    invoice_date = invoice_meta.get("invoice_date") or sale.created_at.strftime("%d/%m/%Y")
-    client_name = invoice_meta.get("client_name") or sale.customer_name or "Consumidor Final"
-    payment_method_label_raw = invoice_meta.get("payment_method_label") or sale.payment_method
-    payment_method_label = _normalize_payment_method_label(payment_method_label_raw)
+    client_name = str(
+        invoice_meta.get("client_name")
+        or sale.customer_name
+        or "Consumidor Final"
+    ).strip()
 
-    if company_logo:
-        try:
-            elements.append(_build_reportlab_image(str(company_logo), width=60, height=60))
-            elements.append(Spacer(1, 6))
-        except Exception as exc:
-            logger.exception(
-                "[receipt-pdf] Failed to render logo for sale_id=%s source=%s error=%s",
-                sale.id,
-                company_logo,
-                exc,
-            )
+    payment_method_raw = str(invoice_meta.get("payment_method_label") or sale.payment_method or "").lower()
+    is_cash = payment_method_raw in {"cash", "dinheiro", "numerario"}
+    is_bank = payment_method_raw in {"card", "mpesa", "skywallet", "banco", "bci pos", "m-pesa", "e-mola"}
+    is_cheque = payment_method_raw in {"cheque"}
 
-    company_box_lines = [f"<b>{company_name}</b>"]
+    value_line = f"{Decimal(str(sale.total or 0)):.2f} MT"
+    generated_date_raw = (
+        invoice_meta.get("receipt_generated_at")
+        or sale.updated_at
+        or sale.created_at
+    )
+    try:
+        generated_date = generated_date_raw if isinstance(generated_date_raw, datetime) else datetime.fromisoformat(str(generated_date_raw).replace("Z", "+00:00"))
+    except Exception:
+        generated_date = sale.created_at
+    day_str = generated_date.strftime("%d")
+    month_str = generated_date.strftime("%m")
+    year_short = generated_date.strftime("%y")
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    page_w, page_h = A4
+
+    laranja = HexColor("#E87010")
+    vermelho = HexColor("#CC0000")
+    cinza = HexColor("#AAAAAA")
+    cinza_l = HexColor("#DDDDDD")
+    preto = colors.black
+
+    margem = 10 * mm
+    x0 = margem
+    y0 = margem
+    w = page_w - 2 * margem
+    h = page_h - 2 * margem
+    pad = 6 * mm
+
+    pdf.setStrokeColor(cinza)
+    pdf.setLineWidth(0.4)
+    pdf.rect(x0, y0, w, h)
+
+    box_w = 62 * mm
+    box_h = 32 * mm
+    box_x = x0 + w - box_w - pad
+    box_y = y0 + h - box_h - pad
+    pdf.setLineWidth(0.5)
+    pdf.rect(box_x, box_y, box_w, box_h)
+
+    pdf.setFont("Helvetica-Bold", 14)
+    pdf.setFillColor(laranja)
+    pdf.drawCentredString(box_x + box_w / 2, box_y + box_h - 9 * mm, (company_name or "RECIBO").upper())
+
+    pdf.setFont("Helvetica", 6)
+    pdf.setFillColor(laranja)
+    pdf.drawCentredString(box_x + box_w / 2, box_y + box_h - 13 * mm, "ENGENHARIA & SERVICOS")
+
+    company_lines: List[str] = []
     if company_nuit:
-        company_box_lines.append(f"N.U.I.T: {company_nuit}")
+        company_lines.append(f"N.U.I.T: {company_nuit}")
     if company_contacts:
-        company_box_lines.append(f"Cell: {company_contacts}")
+        company_lines.append(f"Cell: {company_contacts}")
     if company_location:
-        company_box_lines.append(company_location)
+        company_lines.append(company_location)
+    company_lines = company_lines[:4]
 
-    company_box = Table(
-        [[Paragraph("<br/>".join(company_box_lines), styles["Normal"])]],
-        colWidths=[240],
-    )
-    company_box.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.8, colors.black),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 10),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-    ]))
+    pdf.setFont("Helvetica", 7)
+    pdf.setFillColor(preto)
+    ty = box_y + box_h - 17 * mm
+    for line in company_lines:
+        pdf.drawCentredString(box_x + box_w / 2, ty, line)
+        ty -= 3.5 * mm
 
-    receipt_header = Paragraph(
-        f"<b>RECIBO <font color='red'>{invoice_number_display}</font></b><br/>Data: {invoice_date}",
-        styles["Title"],
-    )
-    top_row = Table([[company_box, receipt_header]], colWidths=[250, 250])
-    top_row.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    elements.append(top_row)
-    elements.append(Spacer(1, 12))
+    header_y = y0 + h - pad - 10 * mm
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.setFillColor(preto)
+    pdf.drawString(x0 + pad, header_y, "RECIBO")
 
-    elements.append(Paragraph(f"Recebi(emos) do(a) Sr.(es): <b>{client_name}</b>", styles["Normal"]))
-    elements.append(Spacer(1, 4))
-    elements.append(Paragraph(f"a quantia de: <b>{sale.total:.2f} MT</b>", styles["Normal"]))
-    elements.append(Spacer(1, 4))
-    elements.append(Paragraph(
-        f"Proveniente no pagamento de: <b>Fatura {invoice_number_display}</b>",
-        styles["Normal"],
-    ))
-    elements.append(Spacer(1, 8))
-    elements.append(Paragraph("de que, passamos o presente recibo.", styles["Normal"]))
-    elements.append(Spacer(1, 10))
+    pdf.setFont("Helvetica-Bold", 18)
+    num_w = pdf.stringWidth(receipt_number_display, "Helvetica-Bold", 18)
+    pdf.setFillColor(vermelho)
+    pdf.drawString(box_x - num_w - 4 * mm, header_y, receipt_number_display)
 
-    method = str(payment_method_label_raw or "").lower()
-    is_cash = method in {"cash", "dinheiro", "numerario"}
-    is_bank = method in {"card", "mpesa", "skywallet", "banco"}
-    is_cheque = method in {"cheque"}
-    payment_line = (
-        f"({'X' if is_cash else ' '}) Numerario    "
-        f"({'X' if is_cheque else ' '}) Cheque No __________    "
-        f"({'X' if is_bank else ' '}) Banco"
-    )
-    elements.append(Paragraph(payment_line, styles["Normal"]))
-    elements.append(Spacer(1, 8))
-    elements.append(Paragraph(f"Forma de pagamento: {payment_method_label}", styles["Normal"]))
-    elements.append(Spacer(1, 24))
-    elements.append(Paragraph("Assinatura e Carimbo: ________________________________", styles["Normal"]))
+    campo_x = x0 + pad
+    campo_w = box_x - x0 - pad * 2
+    pdf.setStrokeColor(cinza)
+    pdf.setLineWidth(0.4)
+    pdf.line(campo_x, header_y - 8 * mm, campo_x + campo_w, header_y - 8 * mm)
+    pdf.line(campo_x, header_y - 16 * mm, campo_x + campo_w, header_y - 16 * mm)
+
+    pdf.setFont("Helvetica", 8)
+    pdf.setFillColor(preto)
+    pdf.drawString(campo_x, header_y - 6.5 * mm, value_line)
+
+    sep_y = box_y - 4 * mm
+    pdf.setStrokeColor(cinza_l)
+    pdf.line(x0, sep_y, x0 + w, sep_y)
+
+    row_x = x0 + pad
+    row_w = w - pad * 2
+    cur_y = sep_y - 9 * mm
+
+    def field_line(txt: str, value: str, lx: float, ly: float, lw: float, fs: int = 8):
+        pdf.setFont("Helvetica", fs)
+        pdf.setFillColor(preto)
+        pdf.drawString(lx, ly + 2, txt)
+        tx = lx + pdf.stringWidth(txt, "Helvetica", fs) + 2 * mm
+        pdf.setStrokeColor(cinza)
+        pdf.setLineWidth(0.4)
+        pdf.line(tx, ly, lx + lw, ly)
+        if value:
+            pdf.setFillColor(preto)
+            pdf.drawString(tx + 1.5 * mm, ly + 2, value)
+
+    pdf.setFillColor(preto)
+    field_line("Recebemos do(s) Exmo.(s) Sr.(es)", client_name, row_x, cur_y, row_w)
+
+    cur_y -= 10 * mm
+    label_q = "a quantia de"
+    lq_w = pdf.stringWidth(label_q, "Helvetica", 8)
+    pdf.setFont("Helvetica", 8)
+    pdf.setFillColor(preto)
+    pdf.drawString(row_x, cur_y + 2, label_q)
+    val_x = row_x + lq_w + 4 * mm
+    val_w = row_w - lq_w - 4 * mm - 10 * mm
+    pdf.setStrokeColor(cinza)
+    pdf.setLineWidth(0.5)
+    pdf.rect(val_x, cur_y - 1 * mm, val_w, 7 * mm)
+    pdf.setFont("Helvetica-Bold", 8)
+    pdf.drawString(val_x + val_w + 2 * mm, cur_y + 2, "MT")
+
+    cur_y -= 11 * mm
+    field_line("Proveniente no pagamento de", f"Fatura n.o {invoice_number_display}", row_x, cur_y, row_w)
+    cur_y -= 7 * mm
+    pdf.setStrokeColor(cinza)
+    pdf.line(row_x, cur_y, row_x + row_w, cur_y)
+
+    cur_y -= 9 * mm
+    pdf.setFont("Helvetica", 8)
+    pdf.setFillColor(preto)
+    pdf.drawString(row_x, cur_y + 2, "de que, passamos o presente recibo.")
+
+    cur_y -= 11 * mm
+    pdf.setStrokeColor(cinza)
+    pdf.rect(row_x, cur_y - 0.5 * mm, 3.5 * mm, 3.5 * mm)
+    if is_cash:
+        pdf.line(row_x + 0.5 * mm, cur_y, row_x + 3 * mm, cur_y + 2.5 * mm)
+        pdf.line(row_x + 3 * mm, cur_y + 2.5 * mm, row_x + 6 * mm, cur_y - 1 * mm)
+    pdf.setFont("Helvetica", 8)
+    pdf.setFillColor(preto)
+    pdf.drawString(row_x + 5 * mm, cur_y + 2, "Numerario")
+
+    banco_x = row_x + 36 * mm
+    pdf.rect(banco_x, cur_y - 0.5 * mm, 3.5 * mm, 3.5 * mm)
+    if is_bank:
+        pdf.line(banco_x + 0.5 * mm, cur_y, banco_x + 3 * mm, cur_y + 2.5 * mm)
+        pdf.line(banco_x + 3 * mm, cur_y + 2.5 * mm, banco_x + 6 * mm, cur_y - 1 * mm)
+    pdf.drawString(banco_x + 5 * mm, cur_y + 2, "Banco")
+    bw = pdf.stringWidth("Banco", "Helvetica", 8)
+    banco_end = row_x + row_w * 0.52
+    pdf.line(banco_x + 5 * mm + bw + 2 * mm, cur_y, banco_end, cur_y)
+
+    date_x = banco_end + 3 * mm
+    date_prefix = f".............., {day_str} de"
+    pdf.drawString(date_x, cur_y + 2, date_prefix)
+    dtw = pdf.stringWidth(date_prefix, "Helvetica", 8)
+    pdf.drawString(date_x + dtw + 2 * mm, cur_y + 2, "20")
+    anow = pdf.stringWidth("20", "Helvetica", 8)
+    pdf.line(date_x + dtw + 2 * mm + anow + 1 * mm, cur_y, row_x + row_w, cur_y)
+    pdf.drawString(row_x + row_w - 18 * mm, cur_y + 2, year_short)
+
+    cur_y -= 11 * mm
+    pdf.rect(row_x, cur_y - 0.5 * mm, 3.5 * mm, 3.5 * mm)
+    if is_cheque:
+        pdf.line(row_x + 0.5 * mm, cur_y, row_x + 3 * mm, cur_y + 2.5 * mm)
+        pdf.line(row_x + 3 * mm, cur_y + 2.5 * mm, row_x + 6 * mm, cur_y - 1 * mm)
+    pdf.drawString(row_x + 5 * mm, cur_y + 2, "Cheque N")
+    cqw = pdf.stringWidth("Cheque N", "Helvetica", 8)
+    cheq_end = row_x + row_w * 0.38
+    pdf.line(row_x + 5 * mm + cqw + 2 * mm, cur_y, cheq_end, cur_y)
+
+    ass_x = cheq_end + 5 * mm
+    pdf.drawString(ass_x, cur_y + 2, "Assinatura e Carimbo")
+    aw = pdf.stringWidth("Assinatura e Carimbo", "Helvetica", 8)
+    pdf.line(ass_x + aw + 2 * mm, cur_y, row_x + row_w, cur_y)
 
     if company_stamp:
         try:
-            elements.append(Spacer(1, 8))
-            stamp = _build_reportlab_image(str(company_stamp), width=96, height=96)
-            stamp_wrap = Table([["", stamp]], colWidths=[404, 96])
-            stamp_wrap.setStyle(TableStyle([
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-            ]))
-            elements.append(stamp_wrap)
+            stamp = _build_reportlab_image(str(company_stamp), width=70, height=45)
+            stamp.drawOn(pdf, row_x + row_w - 78 * mm, y0 + 15 * mm)
         except Exception as exc:
             logger.exception(
                 "[receipt-pdf] Failed to render stamp for sale_id=%s source=%s error=%s",
@@ -4665,10 +4799,19 @@ def generate_receipt_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
                 exc,
             )
 
-    doc.build(elements)
-    pdf = buffer.getvalue()
+    pdf.setFont("Helvetica", 5)
+    pdf.setFillColor(HexColor("#999999"))
+    pdf.drawString(
+        x0 + pad,
+        y0 + 3 * mm,
+        "Top Grafica, Lda. - Av. Eduardo Mondlane 203, Autorizacao nr 025/MFF - TIP/99 - NUIT: 400061084",
+    )
+
+    pdf.showPage()
+    pdf.save()
+    result = buffer.getvalue()
     buffer.close()
-    return pdf
+    return result
 
 # ===================================================================
 # Image Upload
