@@ -21,6 +21,23 @@ router = APIRouter(
     tags=["skypdv"]
 )
 
+
+def _mt_val(mt):
+    """Normalize a movement_type value to a plain string value."""
+    try:
+        return mt.value
+    except Exception:
+        return str(mt)
+
+
+def _mt_in(mt, *targets):
+    v = _mt_val(mt)
+    for t in targets:
+        tv = t.value if hasattr(t, "value") else str(t)
+        if v == tv:
+            return True
+    return False
+
 # ===================================================================
 # Terminal Endpoints
 # ===================================================================
@@ -1141,9 +1158,9 @@ def get_sales_report_pdf(
     for movement in product_movements:
         stats = movement_by_product.setdefault(movement.product_id, {"entries": 0, "exits": 0})
         amount = float(movement.quantity or 0)
-        if movement.movement_type in (MovementType.IN, MovementType.RETURN):
+        if _mt_in(movement.movement_type, MovementType.IN, MovementType.RETURN):
             stats["entries"] += amount
-        elif movement.movement_type in (MovementType.OUT, MovementType.SALE):
+        elif _mt_in(movement.movement_type, MovementType.OUT, MovementType.SALE):
             stats["exits"] += abs(amount)
     sold_table_data = [["Produto", "Qtd vendida", "Entradas", "Saidas", "Estoque atual"]]
     for product in sold_products:
@@ -1183,11 +1200,14 @@ def get_sales_report_pdf(
         .group_by(PDVStockMovement.movement_type)
         .all()
     )
-    move_sums = {mt: (qty or 0) for mt, qty in movements}
-    entries = (move_sums.get(MovementType.IN, 0) or 0) + (move_sums.get(MovementType.RETURN, 0) or 0)
-    exits = abs(move_sums.get(MovementType.OUT, 0) or 0) + abs(move_sums.get(MovementType.SALE, 0) or 0)
-    transfers = move_sums.get(MovementType.TRANSFER, 0) or 0
-    adjustments = move_sums.get(MovementType.ADJUSTMENT, 0) or 0
+    move_sums = {}
+    for mt, qty in movements:
+        key = _mt_val(mt)
+        move_sums[key] = (qty or 0)
+    entries = (move_sums.get(MovementType.IN.value, 0) or 0) + (move_sums.get(MovementType.RETURN.value, 0) or 0)
+    exits = abs(move_sums.get(MovementType.OUT.value, 0) or 0) + abs(move_sums.get(MovementType.SALE.value, 0) or 0)
+    transfers = move_sums.get(MovementType.TRANSFER.value, 0) or 0
+    adjustments = move_sums.get(MovementType.ADJUSTMENT.value, 0) or 0
     total_movements = entries + exits + abs(transfers) + abs(adjustments)
     stock_table_data = [
         ["Tipo", "Quantidade"],
@@ -1232,13 +1252,13 @@ def get_sales_report_pdf(
             {"entries": 0, "exits": 0, "transfers": 0, "adjustments": 0},
         )
         amount = float(qty or 0)
-        if movement_type in (MovementType.IN, MovementType.RETURN):
+        if _mt_in(movement_type, MovementType.IN, MovementType.RETURN):
             entry["entries"] += amount
-        elif movement_type in (MovementType.OUT, MovementType.SALE):
+        elif _mt_in(movement_type, MovementType.OUT, MovementType.SALE):
             entry["exits"] += abs(amount)
-        elif movement_type == MovementType.TRANSFER:
+        elif _mt_in(movement_type, MovementType.TRANSFER):
             entry["transfers"] += abs(amount)
-        elif movement_type == MovementType.ADJUSTMENT:
+        elif _mt_in(movement_type, MovementType.ADJUSTMENT):
             entry["adjustments"] += abs(amount)
 
     if per_product:
@@ -1399,11 +1419,14 @@ def get_sales_report_excel(
         .group_by(PDVStockMovement.movement_type)
         .all()
     )
-    move_sums = {mt: (qty or 0) for mt, qty in movements}
-    entries = (move_sums.get(MovementType.IN, 0) or 0) + (move_sums.get(MovementType.RETURN, 0) or 0)
-    exits = abs(move_sums.get(MovementType.OUT, 0) or 0) + abs(move_sums.get(MovementType.SALE, 0) or 0)
-    transfers = move_sums.get(MovementType.TRANSFER, 0) or 0
-    adjustments = move_sums.get(MovementType.ADJUSTMENT, 0) or 0
+    move_sums = {}
+    for mt, qty in movements:
+        key = _mt_val(mt)
+        move_sums[key] = (qty or 0)
+    entries = (move_sums.get(MovementType.IN.value, 0) or 0) + (move_sums.get(MovementType.RETURN.value, 0) or 0)
+    exits = abs(move_sums.get(MovementType.OUT.value, 0) or 0) + abs(move_sums.get(MovementType.SALE.value, 0) or 0)
+    transfers = move_sums.get(MovementType.TRANSFER.value, 0) or 0
+    adjustments = move_sums.get(MovementType.ADJUSTMENT.value, 0) or 0
     total_movements = entries + exits + abs(transfers) + abs(adjustments)
     ws.append(["Entradas (IN/RETURN)", entries])
     ws.append(["Saídas (OUT/SALE)", exits])
@@ -1435,13 +1458,13 @@ def get_sales_report_excel(
             {"entries": 0, "exits": 0, "transfers": 0, "adjustments": 0},
         )
         amount = float(qty or 0)
-        if movement_type in (MovementType.IN, MovementType.RETURN):
+        if _mt_in(movement_type, MovementType.IN, MovementType.RETURN):
             entry["entries"] += amount
-        elif movement_type in (MovementType.OUT, MovementType.SALE):
+        elif _mt_in(movement_type, MovementType.OUT, MovementType.SALE):
             entry["exits"] += abs(amount)
-        elif movement_type == MovementType.TRANSFER:
+        elif _mt_in(movement_type, MovementType.TRANSFER):
             entry["transfers"] += abs(amount)
-        elif movement_type == MovementType.ADJUSTMENT:
+        elif _mt_in(movement_type, MovementType.ADJUSTMENT):
             entry["adjustments"] += abs(amount)
     product_current_stock = {
         row.product_id: float(row.current_stock or 0)
@@ -2174,16 +2197,16 @@ def get_stock_day_report_pdf(
     totals = {"entries": 0.0, "exits": 0.0, "adjustments": 0.0, "transfers": 0.0, "sales": 0.0}
     for movement, _product in movement_rows:
         qty = abs(float(movement.quantity or 0))
-        if movement.movement_type in (MovementType.IN, MovementType.RETURN):
+        if _mt_in(movement.movement_type, MovementType.IN, MovementType.RETURN):
             totals["entries"] += qty
-        elif movement.movement_type == MovementType.SALE:
+        elif _mt_in(movement.movement_type, MovementType.SALE):
             totals["sales"] += qty
             totals["exits"] += qty
-        elif movement.movement_type == MovementType.OUT:
+        elif _mt_in(movement.movement_type, MovementType.OUT):
             totals["exits"] += qty
-        elif movement.movement_type == MovementType.ADJUSTMENT:
+        elif _mt_in(movement.movement_type, MovementType.ADJUSTMENT):
             totals["adjustments"] += qty
-        elif movement.movement_type == MovementType.TRANSFER:
+        elif _mt_in(movement.movement_type, MovementType.TRANSFER):
             totals["transfers"] += qty
 
     buffer = io.BytesIO()
@@ -2238,9 +2261,9 @@ def get_stock_day_report_pdf(
             {"entries": 0.0, "exits": 0.0, "current_stock": 0.0},
         )
         qty = abs(float(movement.quantity or 0))
-        if movement.movement_type in (MovementType.IN, MovementType.RETURN):
+        if _mt_in(movement.movement_type, MovementType.IN, MovementType.RETURN):
             summary["entries"] += qty
-        elif movement.movement_type in (MovementType.OUT, MovementType.SALE):
+        elif _mt_in(movement.movement_type, MovementType.OUT, MovementType.SALE):
             summary["exits"] += qty
 
     stock_rows = [["Produto", "Entradas", "Saidas", "Estoque atual"]]
