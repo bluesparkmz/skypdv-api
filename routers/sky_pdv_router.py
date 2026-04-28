@@ -1054,62 +1054,7 @@ def get_sales_report_pdf(
     story.append(payments_table)
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Produtos mais vendidos (Top 30)", styles["Heading3"]))
-    top_products = controller.get_top_products_report(db, terminal.id, start_date, end_date, limit=100, user_id=filter_user_id)
-    if product_scope == "beverages":
-        filtered_top_products = []
-        for p in top_products:
-            product_name = str(p.get("product_name") or "").lower()
-            if any(
-                keyword in product_name
-                for keyword in [
-                    "bebida",
-                    "drink",
-                    "sumo",
-                    "suco",
-                    "agua",
-                    "água",
-                    "refrigerante",
-                    "cerveja",
-                    "vinho",
-                    "whisky",
-                    "cafe",
-                    "café",
-                    "cha",
-                    "chá",
-                    "milkshake",
-                    "juice",
-                    "soda",
-                ]
-            ):
-                filtered_top_products.append(p)
-        top_products = filtered_top_products[:30]
-    else:
-        top_products = top_products[:30]
-    items_table_data = [["Produto", "Qtd", "Receita", "Lucro"]]
-    for p in top_products:
-        items_table_data.append(
-            [
-                str(p.get("product_name") or ""),
-                _fmt_int(p.get("quantity_sold") or 0),
-                _fmt_2(p.get("revenue") or 0),
-                _fmt_2(p.get("profit") or 0),
-            ]
-        )
-    items_table = Table(items_table_data, colWidths=[240, 70, 100, 100])
-    items_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-            ]
-        )
-    )
-    story.append(items_table)
-    story.append(Spacer(1, 12))
+    # (Removed "Produtos mais vendidos" section — PDF will include only summary, payments and sold products)
 
     # Lista completa de produtos vendidos no periodo com estoque atual
     story.append(Paragraph("Produtos vendidos no periodo", styles["Heading3"]))
@@ -1162,18 +1107,23 @@ def get_sales_report_pdf(
             stats["entries"] += amount
         elif _mt_in(movement.movement_type, MovementType.OUT, MovementType.SALE):
             stats["exits"] += abs(amount)
-    sold_table_data = [["Produto", "Qtd vendida", "Entradas", "Saidas", "Estoque atual"]]
+    # Build table showing only products that were sold in the period, with entries, exits and total movement
+    sold_table_data = [["Produto", "Qtd vendida", "Entradas", "Saidas", "Total mov."]]
     for product in sold_products:
+        qty_sold = float(product.qty or 0)
+        if qty_sold <= 0:
+            continue
         movement_stats = movement_by_product.get(product.product_id, {"entries": 0, "exits": 0})
-        sold_table_data.append(
-            [
-                str(product.name or ""),
-                _fmt_int(product.qty or 0),
-                _fmt_int(movement_stats["entries"]),
-                _fmt_int(movement_stats["exits"]),
-                _fmt_int(product.stock or 0),
-            ]
-        )
+        entries = float(movement_stats.get("entries", 0) or 0)
+        exits = float(movement_stats.get("exits", 0) or 0)
+        total_mov = entries + exits
+        sold_table_data.append([
+            str(product.name or ""),
+            _fmt_int(qty_sold),
+            _fmt_int(entries),
+            _fmt_int(exits),
+            _fmt_int(total_mov),
+        ])
     if len(sold_table_data) == 1:
         sold_table_data.append(["Sem produtos vendidos", "0", "0", "0", "0"])
     sold_table = Table(sold_table_data, colWidths=[220, 75, 70, 70, 75])
@@ -1261,37 +1211,7 @@ def get_sales_report_pdf(
         elif _mt_in(movement_type, MovementType.ADJUSTMENT):
             entry["adjustments"] += abs(amount)
 
-    if per_product:
-        rows = [["Produto", "Entradas", "Saídas", "Total mov."]]
-        items = []
-        for name, data in per_product.items():
-            total = data["entries"] + data["exits"] + data["transfers"] + data["adjustments"]
-            items.append((name, data["entries"], data["exits"], total))
-        items.sort(key=lambda x: x[3], reverse=True)
-        for name, entries_val, exits_val, total_val in items[:50]:
-            rows.append(
-                [
-                    str(name),
-                    _fmt_int(entries_val),
-                    _fmt_int(exits_val),
-                    _fmt_int(total_val),
-                ]
-            )
-        product_table = Table(rows, colWidths=[240, 70, 70, 70])
-        product_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-                ]
-            )
-        )
-        story.append(product_table)
-    else:
-        story.append(Paragraph("Nenhum movimento de produto no periodo.", styles["Normal"]))
+    # Removed additional product movements summaries to keep PDF focused on totals and sold products only
 
     doc.build(story)
     pdf_bytes = buffer.getvalue()
