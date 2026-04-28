@@ -1033,6 +1033,7 @@ def get_sales_report_pdf(
         db.query(
             PDVProduct.id.label("product_id"),
             PDVProduct.name,
+            PDVProduct.price.label("price"),
             func.sum(PDVSaleItem.quantity).label("qty"),
             func.max(PDVInventory.quantity).label("stock"),
         )
@@ -1051,7 +1052,7 @@ def get_sales_report_pdf(
         sold_products_query = sold_products_query.filter(PDVSale.created_by == filter_user_id)
     sold_products = (
         _apply_product_scope(sold_products_query)
-        .group_by(PDVProduct.id, PDVProduct.name)
+        .group_by(PDVProduct.id, PDVProduct.name, PDVProduct.price)
         .order_by(func.sum(PDVSaleItem.quantity).desc())
         .all()
     )
@@ -1078,26 +1079,32 @@ def get_sales_report_pdf(
             stats["entries"] += amount
         elif _mt_in(movement.movement_type, MovementType.OUT, MovementType.SALE):
             stats["exits"] += abs(amount)
-    # Build table showing only products that were sold in the period, with entries, exits and total movement
-    sold_table_data = [["Produto", "Qtd vendida", "Entradas", "Saidas", "Total mov."]]
+    # Build table showing only products that were sold in the period,
+    # include initial stock and monetary total moved (price * qty)
+    sold_table_data = [["Produto", "Qtd vendida", "Estoque inicial", "Entradas", "Saidas", "Total mov."]]
     for product in sold_products:
         qty_sold = float(product.qty or 0)
         if qty_sold <= 0:
             continue
+        price = float(getattr(product, "price", 0) or 0)
         movement_stats = movement_by_product.get(product.product_id, {"entries": 0, "exits": 0})
         entries = float(movement_stats.get("entries", 0) or 0)
         exits = float(movement_stats.get("exits", 0) or 0)
-        total_mov = entries + exits
+        current_stock = float(product.stock or 0)
+        # estimate initial stock at period start
+        initial_stock = current_stock - (entries - exits)
+        total_mov_value = price * qty_sold
         sold_table_data.append([
             str(product.name or ""),
             _fmt_int(qty_sold),
+            _fmt_int(initial_stock),
             _fmt_int(entries),
             _fmt_int(exits),
-            _fmt_int(total_mov),
+            _fmt_2(total_mov_value),
         ])
     if len(sold_table_data) == 1:
-        sold_table_data.append(["Sem produtos vendidos", "0", "0", "0", "0"])
-    sold_table = Table(sold_table_data, colWidths=[220, 75, 70, 70, 75])
+        sold_table_data.append(["Sem produtos vendidos", "0", "0", "0", "0", "0"])
+    sold_table = Table(sold_table_data, colWidths=[220, 75, 75, 70, 70, 100])
     sold_table.setStyle(
         TableStyle(
             [
@@ -1112,75 +1119,7 @@ def get_sales_report_pdf(
     story.append(sold_table)
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Movimento de Produtos (Entradas e Saídas)", styles["Heading3"]))
-    movements = (
-        db.query(PDVStockMovement.movement_type, func.sum(PDVStockMovement.quantity))
-        .filter(PDVStockMovement.terminal_id == terminal.id)
-        .filter(PDVStockMovement.created_at >= start_date)
-        .filter(PDVStockMovement.created_at <= end_date)
-        .group_by(PDVStockMovement.movement_type)
-        .all()
-    )
-    move_sums = {}
-    for mt, qty in movements:
-        key = _mt_val(mt)
-        move_sums[key] = (qty or 0)
-    entries = (move_sums.get(MovementType.IN.value, 0) or 0) + (move_sums.get(MovementType.RETURN.value, 0) or 0)
-    exits = abs(move_sums.get(MovementType.OUT.value, 0) or 0) + abs(move_sums.get(MovementType.SALE.value, 0) or 0)
-    transfers = move_sums.get(MovementType.TRANSFER.value, 0) or 0
-    adjustments = move_sums.get(MovementType.ADJUSTMENT.value, 0) or 0
-    total_movements = entries + exits + abs(transfers) + abs(adjustments)
-    stock_table_data = [
-        ["Tipo", "Quantidade"],
-        ["Entradas (IN/RETURN)", _fmt_int(entries)],
-        ["Saídas (OUT/SALE)", _fmt_int(exits)],
-        ["Transferências", _fmt_int(transfers)],
-        ["Ajustes", _fmt_int(adjustments)],
-        ["Total movimentado", _fmt_int(total_movements)],
-    ]
-    stock_table = Table(stock_table_data, colWidths=[240, 270])
-    stock_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-            ]
-        )
-    )
-    story.append(stock_table)
-    story.append(Spacer(1, 12))
-
-    story.append(Paragraph("Movimentos por Produto", styles["Heading3"]))
-    product_movements = (
-        db.query(
-            PDVProduct.name,
-            PDVStockMovement.movement_type,
-            func.sum(PDVStockMovement.quantity),
-        )
-        .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
-        .filter(PDVStockMovement.terminal_id == terminal.id)
-        .filter(PDVStockMovement.created_at >= start_date)
-        .filter(PDVStockMovement.created_at <= end_date)
-        .group_by(PDVProduct.name, PDVStockMovement.movement_type)
-        .all()
-    )
-    per_product = {}
-    for name, movement_type, qty in product_movements:
-        entry = per_product.setdefault(
-            name or "Sem nome",
-            {"entries": 0, "exits": 0, "transfers": 0, "adjustments": 0},
-        )
-        amount = float(qty or 0)
-        if _mt_in(movement_type, MovementType.IN, MovementType.RETURN):
-            entry["entries"] += amount
-        elif _mt_in(movement_type, MovementType.OUT, MovementType.SALE):
-            entry["exits"] += abs(amount)
-        elif _mt_in(movement_type, MovementType.TRANSFER):
-            entry["transfers"] += abs(amount)
-        elif _mt_in(movement_type, MovementType.ADJUSTMENT):
-            entry["adjustments"] += abs(amount)
+    # Removed summary "Movimento de Produtos" and "Movimentos por Produto" per request
 
     # Removed additional product movements summaries to keep PDF focused on totals and sold products only
 
@@ -1300,118 +1239,92 @@ def get_sales_report_excel(
     for name, value in rows:
         ws.append([name, value])
 
-    ws.append([])
-    ws.append(["Movimento de Produtos (Entradas e Saídas)", "Quantidade"])
-    movements = (
-        db.query(PDVStockMovement.movement_type, func.sum(PDVStockMovement.quantity))
-        .filter(PDVStockMovement.terminal_id == terminal.id)
-        .filter(PDVStockMovement.created_at >= start_date)
-        .filter(PDVStockMovement.created_at <= end_date)
-        .group_by(PDVStockMovement.movement_type)
+    # Removed Excel product movement summaries per request (keeping only the main summary and product sold list)
+
+    # Add sheet with Produtos Vendidos (mirrors PDF table)
+    ws_products = wb.create_sheet("Produtos Vendidos")
+    ws_products.append(["Produto", "Qtd vendida", "Estoque inicial", "Entradas", "Saidas", "Total mov."])
+
+    sold_products_query = (
+        db.query(
+            PDVProduct.id.label("product_id"),
+            PDVProduct.name,
+            PDVProduct.price.label("price"),
+            func.sum(PDVSaleItem.quantity).label("qty"),
+            func.max(PDVInventory.quantity).label("stock"),
+        )
+        .join(PDVSale, PDVSale.id == PDVSaleItem.sale_id)
+        .join(PDVProduct, PDVProduct.id == PDVSaleItem.product_id)
+        .outerjoin(
+            PDVInventory,
+            (PDVInventory.product_id == PDVProduct.id) & (PDVInventory.terminal_id == terminal.id),
+        )
+        .filter(PDVSale.terminal_id == terminal.id)
+        .filter(PDVSale.created_at >= start_date)
+        .filter(PDVSale.created_at <= end_date)
+        .filter(PDVSale.status == "completed")
+    )
+    if filter_user_id:
+        sold_products_query = sold_products_query.filter(PDVSale.created_by == filter_user_id)
+    sold_products = (
+        sold_products_query
+        .group_by(PDVProduct.id, PDVProduct.name, PDVProduct.price)
+        .order_by(func.sum(PDVSaleItem.quantity).desc())
         .all()
     )
-    move_sums = {}
-    for mt, qty in movements:
-        key = _mt_val(mt)
-        move_sums[key] = (qty or 0)
-    entries = (move_sums.get(MovementType.IN.value, 0) or 0) + (move_sums.get(MovementType.RETURN.value, 0) or 0)
-    exits = abs(move_sums.get(MovementType.OUT.value, 0) or 0) + abs(move_sums.get(MovementType.SALE.value, 0) or 0)
-    transfers = move_sums.get(MovementType.TRANSFER.value, 0) or 0
-    adjustments = move_sums.get(MovementType.ADJUSTMENT.value, 0) or 0
-    total_movements = entries + exits + abs(transfers) + abs(adjustments)
-    ws.append(["Entradas (IN/RETURN)", entries])
-    ws.append(["Saídas (OUT/SALE)", exits])
-    ws.append(["Transferências", transfers])
-    ws.append(["Ajustes", adjustments])
-    ws.append(["Total movimentado", total_movements])
 
-    from openpyxl.styles import PatternFill, Font
-
-    ws_products = wb.create_sheet("Movimentos Produtos")
-    ws_products.append(["Produto", "Entradas", "Saidas", "Estoque atual"])
     product_movements = (
         db.query(
-            PDVProduct.name,
+            PDVProduct.id.label("product_id"),
             PDVStockMovement.movement_type,
-            func.sum(PDVStockMovement.quantity),
+            func.sum(PDVStockMovement.quantity).label("quantity"),
         )
         .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
         .filter(PDVStockMovement.terminal_id == terminal.id)
         .filter(PDVStockMovement.created_at >= start_date)
         .filter(PDVStockMovement.created_at <= end_date)
-        .group_by(PDVProduct.name, PDVStockMovement.movement_type)
+        .group_by(PDVProduct.id, PDVStockMovement.movement_type)
         .all()
     )
-    per_product = {}
-    for name, movement_type, qty in product_movements:
-        entry = per_product.setdefault(
-            name or "Sem nome",
-            {"entries": 0, "exits": 0, "transfers": 0, "adjustments": 0},
-        )
-        amount = float(qty or 0)
-        if _mt_in(movement_type, MovementType.IN, MovementType.RETURN):
-            entry["entries"] += amount
-        elif _mt_in(movement_type, MovementType.OUT, MovementType.SALE):
-            entry["exits"] += abs(amount)
-        elif _mt_in(movement_type, MovementType.TRANSFER):
-            entry["transfers"] += abs(amount)
-        elif _mt_in(movement_type, MovementType.ADJUSTMENT):
-            entry["adjustments"] += abs(amount)
-    product_current_stock = {
-        row.product_id: float(row.current_stock or 0)
-        for row in (
-            db.query(
-                PDVInventory.product_id,
-                func.sum(PDVInventory.quantity).label("current_stock"),
-            )
-            .filter(PDVInventory.terminal_id == terminal.id)
-            .group_by(PDVInventory.product_id)
-            .all()
-        )
-    }
-    items = []
-    for name, data in per_product.items():
-        total = data["entries"] + data["exits"] + data["transfers"] + data["adjustments"]
-        items.append((name, data["entries"], data["exits"], total))
-    # Produtos vendidos (saídas > 0) aparecem primeiro.
-    items.sort(
-        key=lambda x: (
-            0 if x[2] > 0 else 1,
-            -x[2],
-            str(x[0]).lower(),
-        )
-    )
+    movement_by_product = {}
+    for movement in product_movements:
+        stats = movement_by_product.setdefault(movement.product_id, {"entries": 0, "exits": 0})
+        amount = float(movement.quantity or 0)
+        if _mt_in(movement.movement_type, MovementType.IN, MovementType.RETURN):
+            stats["entries"] += amount
+        elif _mt_in(movement.movement_type, MovementType.OUT, MovementType.SALE):
+            stats["exits"] += abs(amount)
 
-    sold_fill = PatternFill(fill_type="solid", fgColor="E8F5E9")
-    sold_font = Font(color="1B5E20")
+    for product in sold_products:
+        qty_sold = float(product.qty or 0)
+        if qty_sold <= 0:
+            continue
+        price = float(getattr(product, "price", 0) or 0)
+        movement_stats = movement_by_product.get(product.product_id, {"entries": 0, "exits": 0})
+        entries = float(movement_stats.get("entries", 0) or 0)
+        exits = float(movement_stats.get("exits", 0) or 0)
+        current_stock = float(product.stock or 0)
+        initial_stock = current_stock - (entries - exits)
+        total_mov_value = price * qty_sold
+        ws_products.append([
+            str(product.name or ""),
+            int(qty_sold),
+            int(initial_stock),
+            int(entries),
+            int(exits),
+            float(total_mov_value),
+        ])
 
-    for name, entries_val, exits_val, _total_val in items:
-        current_stock = 0.0
-        for row in (
-            db.query(PDVProduct.id)
-            .filter(PDVProduct.terminal_id == terminal.id)
-            .filter(PDVProduct.name == name)
-            .all()
-        ):
-            current_stock += product_current_stock.get(row.id, 0.0)
-        ws_products.append([name, entries_val, exits_val, current_stock])
-        if float(exits_val or 0) > 0:
-            current_row = ws_products.max_row
-            for col in range(1, 5):
-                cell = ws_products.cell(row=current_row, column=col)
-                cell.fill = sold_fill
-                cell.font = sold_font
-
-    # Auto ajuste de largura
-    for col in range(1, 3):
+    # Auto ajuste de largura para a planilha de produtos vendidos
+    for col_idx in range(1, 7):
+        col_letter = get_column_letter(col_idx)
         max_length = 0
-        col_letter = get_column_letter(col)
-        for cell in ws[col_letter]:
+        for cell in ws_products[col_letter]:
             try:
                 max_length = max(max_length, len(str(cell.value)))
             except Exception:
                 pass
-        ws.column_dimensions[col_letter].width = max_length + 2
+        ws_products.column_dimensions[col_letter].width = max_length + 2
 
     buffer = io.BytesIO()
     wb.save(buffer)
