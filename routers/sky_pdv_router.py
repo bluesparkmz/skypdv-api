@@ -967,36 +967,7 @@ def get_sales_report_pdf(
     story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)} (Local)", styles["Normal"]))
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Resumo Financeiro", styles["Heading3"]))
-    summary_table_data = [
-        ["Métrica", "Valor"],
-        ["Total de vendas", _fmt_int(summary.get("total_sales"))],
-        ["Receita total", _fmt_2(summary.get("total_revenue"))],
-        ["Custo total", _fmt_2(summary.get("total_cost"))],
-        ["Lucro bruto", _fmt_2(summary.get("gross_profit"))],
-        ["Ticket médio", _fmt_2(summary.get("average_sale_value"))],
-        ["Itens vendidos", _fmt_int(summary.get("total_items_sold"))],
-        ["Descontos", _fmt_2(summary.get("total_discounts"))],
-        ["Impostos", _fmt_2(summary.get("total_taxes"))],
-        [
-            "Vendas anuladas",
-            f"{_fmt_int(summary.get('voided_sales'))} (Total: {_fmt_2(summary.get('voided_amount'))})",
-        ],
-    ]
-    summary_table = Table(summary_table_data, colWidths=[170, 340])
-    summary_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-            ]
-        )
-    )
-    story.append(summary_table)
-    story.append(Spacer(1, 12))
+    # Resumo Financeiro removido conforme solicitado — manter apenas resumo por métodos e produtos vendidos
 
     story.append(Paragraph("Pagamentos por Metodo", styles["Heading3"]))
     cash_total = summary.get("cash_sales") or 0
