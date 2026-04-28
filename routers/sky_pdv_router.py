@@ -1035,7 +1035,7 @@ def get_sales_report_pdf(
             stats["exits"] += abs(amount)
     # Build table showing only products that were sold in the period,
     # include initial stock and monetary total moved (price * qty)
-    sold_table_data = [["Produto", "Qtd vendida", "Estoque inicial", "Entradas", "Saidas", "Total mov."]]
+    sold_table_data = [["Produto", "Qtd vendida", "inicial", "Entradas", "Saidas", "Total"]]
     for product in sold_products:
         qty_sold = float(product.qty or 0)
         if qty_sold <= 0:
@@ -1241,7 +1241,7 @@ def get_sales_report_excel(
 
     # Add sheet with Produtos Vendidos (mirrors PDF table)
     ws_products = wb.create_sheet("Produtos Vendidos")
-    ws_products.append(["Produto", "Qtd vendida", "Estoque inicial", "Entradas", "Saidas", "Total mov."])
+    ws_products.append(["Produto", "vendida", "inicial", "Entradas", "Saidas", "Total mov."])
 
     sold_products_query = (
         db.query(
