@@ -913,6 +913,15 @@ def get_sales_report_pdf(
         except Exception:
             return f"{str(v)} {currency}"
 
+    def _fmt_money_plain(v) -> str:
+        if v is None:
+            return "0.00"
+        try:
+            val = float(v)
+            return f"{val:,.2f}"
+        except Exception:
+            return str(v)
+
     def _fmt_int(v) -> str:
         if v is None:
             return "0"
@@ -967,63 +976,8 @@ def get_sales_report_pdf(
     story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)} (Local)", styles["Normal"]))
     story.append(Spacer(1, 12))
 
-    # Resumo Financeiro removido conforme solicitado — manter apenas resumo por métodos e produtos vendidos
-
-    story.append(Paragraph("Pagamentos por Metodo", styles["Heading3"]))
-    cash_total = summary.get("cash_sales") or 0
-    card_total = summary.get("card_sales") or 0
-    skywallet_total = summary.get("skywallet_sales") or 0
-    mpesa_total = summary.get("mpesa_sales") or 0
-    mixed_total = summary.get("mixed_sales") or 0
-    payments_table_data = [
-        ["Método", "Total"],
-        ["Cash", _fmt_2(cash_total)],
-        ["M-pesa", _fmt_2(mpesa_total)],
-        ["E-Mola", _fmt_2(skywallet_total)],
-        ["BCI POS", _fmt_2(card_total)],
-        ["Misto", _fmt_2(mixed_total)],
-        ["Total pagamentos", _fmt_2(cash_total + card_total + skywallet_total + mpesa_total + mixed_total)],
-    ]
-    def _has_value(v) -> bool:
-        try:
-            return float(v) != 0.0
-        except Exception:
-            return bool(v)
-
-    payment_rows = [
-        ("Cash", cash_total),
-        ("M-pesa", mpesa_total),
-        ("E-Mola", skywallet_total),
-        ("BCI POS", card_total),
-        ("Misto", mixed_total),
-    ]
-    visible_rows = [(name, total) for name, total in payment_rows if _has_value(total)]
-    payments_table_data = [["Metodo", "Total"]]
-    if not visible_rows:
-        payments_table_data.append(["Sem pagamentos", _fmt_2(0)])
-    else:
-        for name, total in visible_rows:
-            payments_table_data.append([name, _fmt_2(total)])
-    payments_table_data.append(
-        [
-            "Total pagamentos",
-            _fmt_2(cash_total + card_total + skywallet_total + mpesa_total + mixed_total),
-        ]
-    )
-
-    payments_table = Table(payments_table_data, colWidths=[170, 340])
-    payments_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-            ]
-        )
-    )
-    story.append(payments_table)
-    story.append(Spacer(1, 12))
+    # Resumo Financeiro removido conforme solicitado — manter apenas produtos vendidos e depois pagamentos
+    # Nota: a tabela de pagamentos será adicionada após a tabela de produtos vendidos para melhor visibilidade
 
     # (Removed "Produtos mais vendidos" section — PDF will include only summary, payments and sold products)
 
@@ -1100,11 +1054,12 @@ def get_sales_report_pdf(
             _fmt_int(initial_stock),
             _fmt_int(entries),
             _fmt_int(exits),
-            _fmt_2(total_mov_value),
+            _fmt_money_plain(total_mov_value),
         ])
     if len(sold_table_data) == 1:
         sold_table_data.append(["Sem produtos vendidos", "0", "0", "0", "0", "0"])
-    sold_table = Table(sold_table_data, colWidths=[220, 75, 75, 70, 70, 100])
+    # Adjust column widths to fit A4 page margins
+    sold_table = Table(sold_table_data, colWidths=[200, 60, 60, 50, 50, 100])
     sold_table.setStyle(
         TableStyle(
             [
@@ -1119,9 +1074,52 @@ def get_sales_report_pdf(
     story.append(sold_table)
     story.append(Spacer(1, 12))
 
-    # Removed summary "Movimento de Produtos" and "Movimentos por Produto" per request
+    # Now append the Payments by method table below the products table (to improve visibility)
+    story.append(Paragraph("Pagamentos por Metodo", styles["Heading3"]))
+    cash_total = summary.get("cash_sales") or 0
+    card_total = summary.get("card_sales") or 0
+    skywallet_total = summary.get("skywallet_sales") or 0
+    mpesa_total = summary.get("mpesa_sales") or 0
+    mixed_total = summary.get("mixed_sales") or 0
 
-    # Removed additional product movements summaries to keep PDF focused on totals and sold products only
+    def _has_value(v) -> bool:
+        try:
+            return float(v) != 0.0
+        except Exception:
+            return bool(v)
+
+    payment_rows = [
+        ("Cash", cash_total),
+        ("M-pesa", mpesa_total),
+        ("E-Mola", skywallet_total),
+        ("BCI POS", card_total),
+        ("Misto", mixed_total),
+    ]
+    visible_rows = [(name, total) for name, total in payment_rows if _has_value(total)]
+    payments_table_data = [["Metodo", "Total"]]
+    if not visible_rows:
+        payments_table_data.append(["Sem pagamentos", _fmt_2(0)])
+    else:
+        for name, total in visible_rows:
+            payments_table_data.append([name, _fmt_2(total)])
+    payments_table_data.append([
+        "Total pagamentos",
+        _fmt_2(cash_total + card_total + skywallet_total + mpesa_total + mixed_total),
+    ])
+
+    payments_table = Table(payments_table_data, colWidths=[200, 320])
+    payments_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(payments_table)
+    story.append(Spacer(1, 12))
 
     doc.build(story)
     pdf_bytes = buffer.getvalue()
