@@ -194,15 +194,30 @@ async def pay_advance_subscription(
 
 @router.post("/skywallet/deposit")
 async def deposit_skywallet(
+    payload: schemas.SkyWalletDepositRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Recarregar SkyWallet (endpoint placeholder para integração futura)"""
+    """Recarregar SkyWallet utilizando M-Pesa"""
     terminal = controller.get_terminal_required(db, current_user.id)
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint de depósito ainda não implementado. Por favor, use o aplicativo SkyWallet para recarregar."
+    wallet_client = SkyWalletGatewayClient()
+    user_details = {
+        "central_user_id": str(current_user.central_user_id),
+        "email": current_user.email,
+        "full_name": current_user.name,
+        "username": current_user.username
+    }
+    
+    reference = f"skypdv-deposit-{terminal.id}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    
+    result = await wallet_client.deposit(
+        user_details=user_details,
+        amount=payload.amount,
+        msisdn=payload.msisdn,
+        reference=reference,
+        metadata={"product_code": "skypdv"}
     )
+    return result
 
 # ===================================================================
 # Terminal Users Management - Gestão de usuários do terminal

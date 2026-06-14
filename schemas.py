@@ -1099,3 +1099,9 @@ class RestaurantTable(RestaurantTableBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class SkyWalletDepositRequest(BaseModel):
+    amount: float
+    msisdn: str
+
+
