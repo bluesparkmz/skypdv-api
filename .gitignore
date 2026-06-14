@@ -1,0 +1,33 @@
+# Arquivos de credenciais secretas
+skywallet-credentials.json
+
+# Arquivos de ambiente
+.env
+.env.local
+.env.*.local
+
+# Banco de dados
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache e arquivos temporários
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

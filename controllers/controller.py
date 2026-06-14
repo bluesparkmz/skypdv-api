@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Optional, Any
 from io import BytesIO
@@ -1947,6 +1947,8 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
+    if terminal.subscription_status == "suspended":
+        raise HTTPException(status_code=403, detail="Terminal suspended due to unpaid subscription. Please make a payment to reactivate.")
 
     register = get_current_register(db, terminal_id, user_id=user_id)
     if not register:
@@ -3907,6 +3909,74 @@ def ensure_monthly_tax_records(db: Session, reference_date: Optional[datetime] =
         db.commit()
 
 
+def process_monthly_subscriptions(db: Session):
+    """Processa as assinaturas mensais dos terminais"""
+    now = datetime.utcnow()
+    initial_billing_date = datetime(2026, 6, 17)
+
+    # Import locally to avoid circular dependencies if any
+    from controllers.skywallet_gateway import SkyWalletGatewayClient
+    wallet_client = SkyWalletGatewayClient()
+
+    terminals = db.query(PDVTerminal).all()
+
+    for terminal in terminals:
+        if terminal.subscription_status is None:
+            terminal.subscription_status = "trial"
+        if terminal.next_billing_date is None:
+            terminal.next_billing_date = initial_billing_date
+
+        if terminal.subscription_status == "suspended":
+            continue
+
+        if terminal.next_billing_date <= now:
+            user = terminal.user
+            if not user or not user.central_user_id:
+                continue
+
+            user_details = {
+                "central_user_id": str(user.central_user_id),
+                "email": user.email,
+                "full_name": user.name,
+                "username": user.username
+            }
+
+            charge_success = False
+            try:
+                # Attempt to get balance
+                balance_data = wallet_client.sync_get_balance(str(user.central_user_id), user_details)
+                main_balance = float(balance_data.get("balance", {}).get("main_balance", 0))
+
+                if main_balance >= 1200:
+                    reference = f"skypdv-subscription-auto-{terminal.id}-{now.isoformat()}"
+                    wallet_client.sync_charge(user_details, 1200.0, reference, {"product_code": "skypdv", "auto": True})
+                    charge_success = True
+            except Exception as e:
+                print(f"Failed to auto-charge terminal {terminal.id}: {e}")
+
+            if charge_success:
+                terminal.next_billing_date = now + timedelta(days=30)
+                terminal.subscription_status = "active"
+                terminal.grace_period_ends_at = None
+            else:
+                # Determine grace period
+                if terminal.next_billing_date == initial_billing_date:
+                    grace_days = 4
+                else:
+                    grace_days = 7
+
+                grace_end = terminal.next_billing_date + timedelta(days=grace_days)
+                terminal.grace_period_ends_at = grace_end
+
+                if now > grace_end:
+                    terminal.subscription_status = "suspended"
+                else:
+                    terminal.subscription_status = "grace_period"
+
+        db.commit()
+
+
+
 def get_tax_summary(db: Session, terminal_id: int, year: int, month: int):
     start_date = datetime(year, month, 1)
     if month == 12:
@@ -3957,6 +4027,8 @@ def create_invoice(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: i
     se houver um caixa aberto para o usuÃ¡rio, ele Ã© associado.
     """
     terminal = get_terminal_required(db, user_id)
+    if terminal.subscription_status == "suspended":
+        raise HTTPException(status_code=403, detail="Terminal suspended due to unpaid subscription. Please make a payment to reactivate.")
     require_terminal_permission(db, terminal.id, user_id, "can_sell")
 
     register = get_current_register(db, terminal.id, user_id=user_id)

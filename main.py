@@ -3,6 +3,10 @@ import threading
 import time
 
 import os
+from dotenv import load_dotenv
+
+# Carregar variáveis de ambiente do arquivo .env
+load_dotenv()
 from fastapi import Depends, FastAPI, Request, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -83,6 +87,7 @@ def _cash_register_expiry_worker():
         try:
             controller.close_expired_registers(db)
             controller.ensure_monthly_tax_records(db)
+            controller.process_monthly_subscriptions(db)
         except Exception as exc:
             print(f"Cash register expiry worker error: {exc}")
         finally:
@@ -109,6 +114,7 @@ def start_cash_register_expiry_worker():
     db = SessionLocal()
     try:
         controller.ensure_monthly_tax_records(db)
+        controller.process_monthly_subscriptions(db)
     except Exception as exc:
         print(f"Initial monthly tax sync error: {exc}")
     finally:

@@ -77,6 +77,9 @@ class PDVTerminal(Base):
     currency = Column(String(10), default="MZN")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    subscription_status = Column(String(50), default="trial", nullable=False)
+    next_billing_date = Column(DateTime, nullable=True)
+    grace_period_ends_at = Column(DateTime, nullable=True)
 
     user = relationship("User", backref="pdv_terminal")
     terminal_users = relationship("PDVTerminalUser", back_populates="terminal", cascade="all, delete-orphan")

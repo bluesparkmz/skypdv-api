@@ -11,3 +11,4 @@ reportlab>=4.0,<5.0
 openpyxl>=3.1,<4.0
 fastapi-cors
 requests>=2.31,<3.0
+python-dotenv>=1.0.0,<2.0.0

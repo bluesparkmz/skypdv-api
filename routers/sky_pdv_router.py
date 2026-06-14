@@ -3,7 +3,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
+from pydantic import BaseModel
 import io
 
 from database import get_db
@@ -11,6 +12,7 @@ from auth import get_current_user
 from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct, PDVInventory
 import schemas
 from controllers import controller
+from controllers.skywallet_gateway import SkyWalletGatewayClient
 import openpyxl
 from openpyxl.utils import get_column_letter
 from whatsapp_service import send_whatsapp_file, send_whatsapp_text
@@ -78,6 +80,129 @@ def update_my_terminal(
     """Atualizar configurações do terminal"""
     terminal = controller.get_terminal_required(db, current_user.id)
     return controller.update_terminal(db, terminal.id, terminal_update, current_user.id)
+
+# ===================================================================
+# Subscription & SkyWallet Endpoints
+# ===================================================================
+
+class PayAdvanceRequest(BaseModel):
+    months: int
+
+@router.get("/skywallet/balance")
+async def get_skywallet_balance(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Obter saldo do SkyWallet do usuário"""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    wallet_client = SkyWalletGatewayClient()
+    user_details = {
+        "central_user_id": str(current_user.central_user_id),
+        "email": current_user.email,
+        "full_name": current_user.name,
+        "username": current_user.username
+    }
+    return await wallet_client.get_balance(str(current_user.central_user_id), user_details)
+
+@router.post("/terminal/subscription/pay")
+async def pay_subscription(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Pagar assinatura mensal (1 mês)"""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    wallet_client = SkyWalletGatewayClient()
+    user_details = {
+        "central_user_id": str(current_user.central_user_id),
+        "email": current_user.email,
+        "full_name": current_user.name,
+        "username": current_user.username
+    }
+    
+    # Get balance first
+    balance_data = await wallet_client.get_balance(str(current_user.central_user_id), user_details)
+    main_balance = float(balance_data.get("balance", {}).get("main_balance", 0))
+    
+    if main_balance < 1200:
+        raise HTTPException(
+            status_code=status.HTTP_402_ACCEPTED,
+            detail="Saldo insuficiente. Por favor, recarregue sua SkyWallet.",
+            headers={"X-Need-Deposit": "true"}
+        )
+    
+    # Charge user
+    reference = f"skypdv-subscription-{terminal.id}-{datetime.utcnow().isoformat()}"
+    await wallet_client.charge(user_details, 1200.0, reference, {"product_code": "skypdv"})
+    
+    # Update terminal subscription
+    if terminal.next_billing_date and terminal.next_billing_date > datetime.utcnow():
+        terminal.next_billing_date = terminal.next_billing_date + timedelta(days=30)
+    else:
+        terminal.next_billing_date = datetime.utcnow() + timedelta(days=30)
+    terminal.subscription_status = "active"
+    terminal.grace_period_ends_at = None
+    db.commit()
+    db.refresh(terminal)
+    
+    return terminal
+
+@router.post("/terminal/subscription/pay-advance")
+async def pay_advance_subscription(
+    request: PayAdvanceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Pagar assinatura antecipada (múltiplos meses)"""
+    months = max(1, min(12, request.months))  # Limit 1-12 months
+    total_amount = 1200 * months
+    
+    terminal = controller.get_terminal_required(db, current_user.id)
+    wallet_client = SkyWalletGatewayClient()
+    user_details = {
+        "central_user_id": str(current_user.central_user_id),
+        "email": current_user.email,
+        "full_name": current_user.name,
+        "username": current_user.username
+    }
+    
+    # Get balance first
+    balance_data = await wallet_client.get_balance(str(current_user.central_user_id), user_details)
+    main_balance = float(balance_data.get("balance", {}).get("main_balance", 0))
+    
+    if main_balance < total_amount:
+        raise HTTPException(
+            status_code=status.HTTP_402_ACCEPTED,
+            detail=f"Saldo insuficiente. Necessário: {total_amount} MT. Por favor, recarregue sua SkyWallet.",
+            headers={"X-Need-Deposit": "true"}
+        )
+    
+    # Charge user
+    reference = f"skypdv-subscription-advance-{terminal.id}-{datetime.utcnow().isoformat()}"
+    await wallet_client.charge(user_details, total_amount, reference, {"product_code": "skypdv", "months": months})
+    
+    # Update terminal subscription
+    if terminal.next_billing_date and terminal.next_billing_date > datetime.utcnow():
+        terminal.next_billing_date = terminal.next_billing_date + timedelta(days=30 * months)
+    else:
+        terminal.next_billing_date = datetime.utcnow() + timedelta(days=30 * months)
+    terminal.subscription_status = "active"
+    terminal.grace_period_ends_at = None
+    db.commit()
+    db.refresh(terminal)
+    
+    return terminal
+
+@router.post("/skywallet/deposit")
+async def deposit_skywallet(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Recarregar SkyWallet (endpoint placeholder para integração futura)"""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Endpoint de depósito ainda não implementado. Por favor, use o aplicativo SkyWallet para recarregar."
+    )
 
 # ===================================================================
 # Terminal Users Management - Gestão de usuários do terminal
@@ -555,6 +680,11 @@ def create_sale(
 ):
     """Registrar nova venda"""
     terminal = controller.get_terminal_required(db, current_user.id)
+    if terminal.subscription_status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Terminal suspenso devido a falta de pagamento da assinatura. Por favor, efetue o pagamento para reativar."
+        )
     controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
     return controller.create_sale(db, sale, terminal.id, current_user.id)
 
@@ -612,6 +742,11 @@ def create_invoice(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
+    if terminal.subscription_status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Terminal suspenso devido a falta de pagamento da assinatura. Por favor, efetue o pagamento para reativar."
+        )
     controller.require_terminal_permission(db, terminal.id, current_user.id, "can_sell")
     return controller.create_invoice(db, sale, terminal.id, current_user.id)
 

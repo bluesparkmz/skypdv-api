@@ -93,6 +93,9 @@ class PDVTerminal(PDVTerminalBase):
     id: int
     user_id: int
     active: bool
+    subscription_status: str
+    next_billing_date: Optional[datetime] = None
+    grace_period_ends_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
