@@ -236,6 +236,27 @@ def get_terminal_required(db: Session, user_id: int):
     terminal = get_or_create_terminal(db, user_id, create_if_missing=False)
     if not terminal:
         raise HTTPException(status_code=404, detail="PDV not setup")
+    # Temporary enforcement override for subscription alerts and suspension
+    # Requirement: start showing alert from 2026-06-16 and limit 2026-06-17
+    try:
+        from datetime import datetime
+        now = datetime.utcnow()
+        # use UTC dates for comparison
+        override_start = datetime(2026, 6, 16)
+        override_limit = datetime(2026, 6, 17, 23, 59, 59)
+
+        # If current time is within override window and the terminal does not
+        # have a sufficient next_billing_date, mark it as suspended (transiently)
+        nb = terminal.next_billing_date
+        if override_start <= now <= override_limit:
+            if not nb or nb <= override_limit:
+                # only apply transient suspension if not already active
+                if getattr(terminal, "subscription_status", None) != "active":
+                    terminal.subscription_status = "suspended"
+    except Exception:
+        # Fail-safe: do not raise here, return terminal as-is
+        pass
+
     return terminal
 
 def update_terminal(db: Session, terminal_id: int, updates: schemas.PDVTerminalUpdate, user_id: int):
