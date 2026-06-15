@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 class SkyWalletGatewayClient:
     def __init__(self):
-        self.base_url = os.getenv("SKYWALLET_GATEWAY_URL", "https://skywallet.bluesparkmz.com")
+        self.base_url = os.getenv("SKYWALLET_GATEWAY_URL", "https://skywallet-api.bluesparkmz.com")
         self.service_name = os.getenv("SKYWALLET_SERVICE_NAME", "skypdv")
         self.api_key = os.getenv("SKYWALLET_API_KEY", "")
         self.signing_secret = os.getenv("SKYWALLET_SIGNING_SECRET", "")
