@@ -9,7 +9,7 @@ import io
 
 from database import get_db
 from auth import get_current_user
-from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct, PDVInventory
+from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct, PDVInventory, PDVSupplier, PDVTerminal, FastFoodRestaurant
 import schemas
 from controllers import controller
 from controllers.skywallet_gateway import SkyWalletGatewayClient
@@ -191,6 +191,86 @@ async def pay_advance_subscription(
     db.refresh(terminal)
     
     return terminal
+
+
+@router.post("/terminal/subscription/pay-all")
+async def pay_all_terminals(
+    restaurant_id: Optional[int] = Query(None, description="ID do restaurante (FastFood) para pagar todos os terminais associados"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Permite que o admin pague a assinatura de TODOS os terminais associados a um restaurante FastFood.
+
+    - Se `restaurant_id` for fornecido, valida que o `current_user` é dono do restaurante.
+    - Cobra o valor total (1200 MT por terminal) da SkyWallet do usuário e atualiza os terminais.
+    """
+    wallet_client = SkyWalletGatewayClient()
+
+    # Descobrir terminais a pagar
+    if restaurant_id is None:
+        # Sem restaurant_id: operar apenas no terminal do usuário atual
+        terminal = controller.get_terminal_required(db, current_user.id)
+        terminal_ids = [terminal.id]
+    else:
+        # Verificar restaurante e permissões
+        restaurant = db.query(FastFoodRestaurant).filter(FastFoodRestaurant.id == restaurant_id).first()
+        if not restaurant:
+            raise HTTPException(status_code=404, detail="Restaurant not found")
+        if restaurant.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Only restaurant owner can perform bulk payment")
+
+        suppliers = db.query(PDVSupplier).filter(
+            PDVSupplier.source_type == "fastfood",
+            PDVSupplier.external_id == restaurant_id
+        ).all()
+        terminal_ids = list({s.terminal_id for s in suppliers})
+
+    if not terminal_ids:
+        raise HTTPException(status_code=400, detail="No terminals found to pay")
+
+    total_amount = 1200.0 * len(terminal_ids)
+
+    user_details = {
+        "central_user_id": str(current_user.central_user_id),
+        "email": current_user.email,
+        "full_name": current_user.name,
+        "username": current_user.username
+    }
+
+    balance_data = await wallet_client.get_balance(str(current_user.central_user_id), user_details)
+    main_balance = float(balance_data.get("balance", {}).get("main_balance", 0))
+    if main_balance < total_amount:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"Saldo insuficiente. Necessário: {total_amount} MT para pagar {len(terminal_ids)} terminais.",
+            headers={"X-Need-Deposit": "true"}
+        )
+
+    reference = f"skypdv-subscription-pay-all-{current_user.id}-{datetime.utcnow().isoformat()}"
+    await wallet_client.charge(user_details, total_amount, reference, {"product_code": "skypdv", "terminals": terminal_ids})
+
+    # Atualizar terminais
+    from models import PDVTerminal
+    updated = []
+    for tid in terminal_ids:
+        t = db.query(PDVTerminal).filter(PDVTerminal.id == tid).first()
+        if not t:
+            continue
+        if t.next_billing_date and t.next_billing_date > datetime.utcnow():
+            t.next_billing_date = t.next_billing_date + timedelta(days=30)
+        else:
+            t.next_billing_date = datetime.utcnow() + timedelta(days=30)
+        t.subscription_status = "active"
+        t.grace_period_ends_at = None
+        db.add(t)
+        updated.append(t)
+
+    db.commit()
+    # Refresh objects
+    for t in updated:
+        db.refresh(t)
+
+    return updated
 
 @router.post("/skywallet/deposit")
 async def deposit_skywallet(
