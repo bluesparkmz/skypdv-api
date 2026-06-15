@@ -37,7 +37,11 @@ class SkyWalletGatewayClient:
         }
         
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers)
+            try:
+                response = await client.get(url, headers=headers)
+            except httpx.RequestError as e:
+                raise HTTPException(status_code=502, detail=f"Network error contacting SkyWallet gateway: {str(e)}")
+
             if response.status_code != 200:
                 try:
                     error_detail = response.json().get("detail", "Failed to get balance from SkyWallet")
@@ -73,7 +77,11 @@ class SkyWalletGatewayClient:
         }
         
         async with httpx.AsyncClient() as client:
-            response = await client.post(url, content=raw_body, headers=headers)
+            try:
+                response = await client.post(url, content=raw_body, headers=headers)
+            except httpx.RequestError as e:
+                raise HTTPException(status_code=502, detail=f"Network error contacting SkyWallet gateway: {str(e)}")
+
             if response.status_code != 200:
                 try:
                     error_detail = response.json().get("detail", "Failed to charge user from SkyWallet")
@@ -109,7 +117,11 @@ class SkyWalletGatewayClient:
         }
         
         async with httpx.AsyncClient() as client:
-            response = await client.post(url, content=raw_body, headers=headers)
+            try:
+                response = await client.post(url, content=raw_body, headers=headers)
+            except httpx.RequestError as e:
+                raise HTTPException(status_code=502, detail=f"Network error contacting SkyWallet gateway: {str(e)}")
+
             if response.status_code != 200:
                 try:
                     error_detail = response.json().get("detail", "Failed to initiate deposit from SkyWallet")

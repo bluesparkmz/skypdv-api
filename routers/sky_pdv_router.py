@@ -125,7 +125,7 @@ async def pay_subscription(
     
     if main_balance < 1200:
         raise HTTPException(
-            status_code=status.HTTP_402_ACCEPTED,
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="Saldo insuficiente. Por favor, recarregue sua SkyWallet.",
             headers={"X-Need-Deposit": "true"}
         )
@@ -171,7 +171,7 @@ async def pay_advance_subscription(
     
     if main_balance < total_amount:
         raise HTTPException(
-            status_code=status.HTTP_402_ACCEPTED,
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=f"Saldo insuficiente. Necessário: {total_amount} MT. Por favor, recarregue sua SkyWallet.",
             headers={"X-Need-Deposit": "true"}
         )
