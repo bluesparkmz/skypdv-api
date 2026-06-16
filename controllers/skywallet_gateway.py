@@ -76,18 +76,21 @@ class SkyWalletGatewayClient:
             "Content-Type": "application/json"
         }
         
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(120.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 response = await client.post(url, content=raw_body, headers=headers)
             except httpx.RequestError as e:
                 raise HTTPException(status_code=502, detail=f"Network error contacting SkyWallet gateway: {str(e)}")
 
-            if response.status_code != 200:
+            if response.status_code not in {200, 201, 202, 204}:
                 try:
                     error_detail = response.json().get("detail", "Failed to charge user from SkyWallet")
                 except Exception:
                     error_detail = response.text or "Failed to charge user from SkyWallet"
                 raise HTTPException(status_code=response.status_code, detail=error_detail)
+            if response.status_code == 204:
+                return {"success": True, "message": "Charge accepted.", "status": "success"}
             try:
                 return response.json()
             except json.JSONDecodeError:
@@ -116,18 +119,21 @@ class SkyWalletGatewayClient:
             "Content-Type": "application/json"
         }
         
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(120.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 response = await client.post(url, content=raw_body, headers=headers)
             except httpx.RequestError as e:
                 raise HTTPException(status_code=502, detail=f"Network error contacting SkyWallet gateway: {str(e)}")
 
-            if response.status_code != 200:
+            if response.status_code not in {200, 201, 202, 204}:
                 try:
                     error_detail = response.json().get("detail", "Failed to initiate deposit from SkyWallet")
                 except Exception:
                     error_detail = response.text or "Failed to initiate deposit from SkyWallet"
                 raise HTTPException(status_code=response.status_code, detail=error_detail)
+            if response.status_code == 204:
+                return {"success": True, "message": "Deposit accepted.", "status": "success"}
             try:
                 return response.json()
             except json.JSONDecodeError:
