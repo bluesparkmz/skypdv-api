@@ -272,51 +272,11 @@ async def pay_all_terminals(
 
     return updated
 
-@router.post("/skywallet/deposit")
-async def deposit_skywallet(
-    payload: schemas.SkyWalletDepositRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Recarregar SkyWallet utilizando M-Pesa"""
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    if not current_user.central_user_id:
-        raise HTTPException(
-            status_code=400, 
-            detail="central_user_id não configurado. Faça login novamente ou sincronize com SkyWallet."
-        )
-    
-    terminal = controller.get_terminal_required(db, current_user.id)
-    wallet_client = SkyWalletGatewayClient()
-    user_details = {
-        "central_user_id": str(current_user.central_user_id),
-        "email": current_user.email,
-        "full_name": current_user.name,
-        "username": current_user.username
-    }
-    
-    reference = f"skypdv-deposit-{terminal.id}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
-    
-    logger.info(
-        f"SkyPDV deposit initiated: central_user_id={user_details['central_user_id']}, "
-        f"amount={payload.amount}, msisdn={payload.msisdn}, reference={reference}"
-    )
-    
-    try:
-        result = await wallet_client.deposit(
-            user_details=user_details,
-            amount=payload.amount,
-            msisdn=payload.msisdn,
-            reference=reference,
-            metadata={"product_code": "skypdv"}
-        )
-        logger.info(f"SkyWallet deposit response: {result}")
-        return result
-    except HTTPException as e:
-        logger.error(f"SkyWallet gateway deposit error: {e.status_code} - {e.detail}")
-        raise
+# DEPRECATED: Deposits are now handled exclusively through SkyWallet
+# Users must go to https://skywallet.bluesparkmz.com to deposit funds
+# @router.post("/skywallet/deposit")
+# async def deposit_skywallet(...):
+#     """Endpoint deprecated - use SkyWallet for deposits"""
 
 # ===================================================================
 # Terminal Users Management - Gestão de usuários do terminal
