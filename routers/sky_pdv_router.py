@@ -279,6 +279,15 @@ async def deposit_skywallet(
     current_user: User = Depends(get_current_user)
 ):
     """Recarregar SkyWallet utilizando M-Pesa"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not current_user.central_user_id:
+        raise HTTPException(
+            status_code=400, 
+            detail="central_user_id não configurado. Faça login novamente ou sincronize com SkyWallet."
+        )
+    
     terminal = controller.get_terminal_required(db, current_user.id)
     wallet_client = SkyWalletGatewayClient()
     user_details = {
@@ -290,14 +299,24 @@ async def deposit_skywallet(
     
     reference = f"skypdv-deposit-{terminal.id}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
     
-    result = await wallet_client.deposit(
-        user_details=user_details,
-        amount=payload.amount,
-        msisdn=payload.msisdn,
-        reference=reference,
-        metadata={"product_code": "skypdv"}
+    logger.info(
+        f"SkyPDV deposit initiated: central_user_id={user_details['central_user_id']}, "
+        f"amount={payload.amount}, msisdn={payload.msisdn}, reference={reference}"
     )
-    return result
+    
+    try:
+        result = await wallet_client.deposit(
+            user_details=user_details,
+            amount=payload.amount,
+            msisdn=payload.msisdn,
+            reference=reference,
+            metadata={"product_code": "skypdv"}
+        )
+        logger.info(f"SkyWallet deposit response: {result}")
+        return result
+    except HTTPException as e:
+        logger.error(f"SkyWallet gateway deposit error: {e.status_code} - {e.detail}")
+        raise
 
 # ===================================================================
 # Terminal Users Management - Gestão de usuários do terminal
