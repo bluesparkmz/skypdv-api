@@ -1968,7 +1968,10 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
-    if terminal.subscription_status == "suspended":
+    # Verificar bloqueio de venda apenas se SKYPDV_ACTIVATE_CHARGING=true
+    import os
+    enforce_charging = os.getenv("SKYPDV_ACTIVATE_CHARGING", "false").strip().lower() in ("1", "true", "yes")
+    if enforce_charging and terminal.subscription_status == "suspended":
         raise HTTPException(status_code=403, detail="Terminal suspended due to unpaid subscription. Please make a payment to reactivate.")
 
     register = get_current_register(db, terminal_id, user_id=user_id)
@@ -4044,11 +4047,14 @@ def update_tax_summary(db: Session, terminal_id: int, year: int, month: int, use
 
 def create_invoice(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int, user_id: int):
     """
-    Cria uma fatura pendente (ou paga, se amount_paid >= total). NÃ£o exige caixa aberto;
-    se houver um caixa aberto para o usuÃ¡rio, ele Ã© associado.
+    Cria uma fatura pendente (ou paga, se amount_paid >= total). Não exige caixa aberto;
+    se houver um caixa aberto para o usuário, ele é associado.
     """
     terminal = get_terminal_required(db, user_id)
-    if terminal.subscription_status == "suspended":
+    # Verificar bloqueio de venda apenas se SKYPDV_ACTIVATE_CHARGING=true
+    import os
+    enforce_charging = os.getenv("SKYPDV_ACTIVATE_CHARGING", "false").strip().lower() in ("1", "true", "yes")
+    if enforce_charging and terminal.subscription_status == "suspended":
         raise HTTPException(status_code=403, detail="Terminal suspended due to unpaid subscription. Please make a payment to reactivate.")
     require_terminal_permission(db, terminal.id, user_id, "can_sell")
 

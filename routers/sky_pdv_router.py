@@ -762,7 +762,9 @@ def create_sale(
 ):
     """Registrar nova venda"""
     terminal = controller.get_terminal_required(db, current_user.id)
-    if terminal.subscription_status == "suspended":
+    # Verificar bloqueio de venda apenas se SKYPDV_ACTIVATE_CHARGING=true
+    enforce_charging = os.getenv("SKYPDV_ACTIVATE_CHARGING", "false").strip().lower() in ("1", "true", "yes")
+    if enforce_charging and terminal.subscription_status == "suspended":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Terminal suspenso devido a falta de pagamento da assinatura. Por favor, efetue o pagamento para reativar."
@@ -824,7 +826,9 @@ def create_invoice(
     current_user: User = Depends(get_current_user)
 ):
     terminal = controller.get_terminal_required(db, current_user.id)
-    if terminal.subscription_status == "suspended":
+    # Verificar bloqueio de venda apenas se SKYPDV_ACTIVATE_CHARGING=true
+    enforce_charging = os.getenv("SKYPDV_ACTIVATE_CHARGING", "false").strip().lower() in ("1", "true", "yes")
+    if enforce_charging and terminal.subscription_status == "suspended":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Terminal suspenso devido a falta de pagamento da assinatura. Por favor, efetue o pagamento para reativar."
