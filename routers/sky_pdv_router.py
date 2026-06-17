@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
+import os
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
@@ -22,6 +23,13 @@ router = APIRouter(
     prefix="/skypdv",
     tags=["skypdv"]
 )
+
+
+@router.get("/config")
+def get_config():
+    """Retorna configurações simples do SkyPDV (flags habilitadas via env)."""
+    activate = os.getenv("SKYPDV_ACTIVATE_CHARGING", "true").strip().lower() in ("1", "true", "yes")
+    return {"activate_charging": activate}
 
 
 def _mt_val(mt):
