@@ -28,7 +28,7 @@ router = APIRouter(
 @router.get("/config")
 def get_config():
     """Retorna configurações simples do SkyPDV (flags habilitadas via env)."""
-    activate = os.getenv("SKYPDV_ACTIVATE_CHARGING", "true").strip().lower() in ("1", "true", "yes")
+    activate = os.getenv("SKYPDV_ACTIVATE_CHARGING", "false").strip().lower() in ("1", "true", "yes")
     return {"activate_charging": activate}
 
 
