@@ -5,6 +5,8 @@ from io import BytesIO
 import csv
 import json
 import logging
+import re
+import unicodedata
 from urllib.request import urlopen
 from urllib.parse import urlparse
 from sqlalchemy.orm import Session
@@ -1064,7 +1066,18 @@ def get_category_sales_report(
 
 
 def _normalize_product_name(name: str) -> str:
-    return " ".join((name or "").strip().lower().split())
+    """
+    Normaliza o nome do produto ignorando maiúsculas/minúsculas, acentos, pontuação e múltiplos espaços.
+    Exemplos que resultam no mesmo valor:
+    'Água Mineral 500ml', 'agua  mineral - 500ml', 'AGUA MINERAL 500ML' -> 'agua mineral 500ml'
+    """
+    if not name:
+        return ""
+    s = name.strip().lower()
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    s = re.sub(r"[^\w\s]", " ", s)
+    return " ".join(s.split())
 
 
 def _ensure_unique_product_name(db: Session, terminal_id: int, name: str, exclude_product_id: Optional[int] = None):
