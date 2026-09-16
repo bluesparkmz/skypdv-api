@@ -551,6 +551,34 @@ async def upload_product_image(
     return {"url": url}
 
 
+@router.get("/products/csv-template")
+def download_csv_template():
+    """
+    Retorna o modelo de arquivo CSV para importação em massa de produtos.
+    """
+    content = "nome,quantidade,preco\nExemplo Produto 1,10,150.00\nExemplo Produto 2,50,25.50\n"
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8-sig")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=modelo_produtos_skypdv.csv"}
+    )
+
+
+@router.post("/products/import-csv")
+def bulk_import_products_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Importar produtos em massa via arquivo CSV (nome, quantidade, preco, categoria).
+    Produtos com o mesmo nome que já existam no sistema serão ignorados.
+    """
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_manage_products")
+    return controller.bulk_import_products_csv(db, file, terminal.id)
+
+
 @router.post("/invoice-assets/upload")
 async def upload_invoice_asset(
     file: UploadFile = File(...),

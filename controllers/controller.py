@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import List, Optional, Any
 from io import BytesIO
+import csv
 import json
 import logging
 from urllib.request import urlopen
@@ -1257,6 +1258,164 @@ def create_product(db: Session, product: schemas.PDVProductCreate, terminal_id: 
     db.commit()
     db.refresh(db_product)
     return db_product
+
+
+def bulk_import_products_csv(db: Session, file: UploadFile, terminal_id: int):
+    """
+    Importa produtos em massa a partir de um arquivo CSV.
+    Campos suportados: nome, quantidade/estoque, preco/valor, categoria, codigo/barcode.
+    Verifica a existência do produto pelo nome e ignora duplicados.
+    """
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="O arquivo CSV está vazio.")
+
+    # Tentar decodificar UTF-8-SIG, UTF-8 ou Latin-1
+    decoded = None
+    for encoding in ["utf-8-sig", "utf-8", "latin-1"]:
+        try:
+            decoded = content.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+
+    if not decoded:
+        raise HTTPException(status_code=400, detail="Não foi possível ler o arquivo CSV. Verifique a codificação do arquivo.")
+
+    lines = [line for line in decoded.splitlines() if line.strip()]
+    if not lines:
+        raise HTTPException(status_code=400, detail="O arquivo CSV não possui conteúdo válido.")
+
+    # Detectar delimitador (; ou ,)
+    first_line = lines[0]
+    delimiter = ";" if ";" in first_line and first_line.count(";") > first_line.count(",") else ","
+
+    reader = csv.reader(io.StringIO(decoded), delimiter=delimiter)
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(status_code=400, detail="Sem dados no CSV.")
+
+    # Normalizar cabeçalho
+    header = [h.strip().lower() for h in rows[0]]
+
+    name_idx = -1
+    qty_idx = -1
+    price_idx = -1
+    cat_idx = -1
+    barcode_idx = -1
+
+    for idx, col in enumerate(header):
+        c = col.replace(" ", "_").replace("ç", "c").replace("ã", "a").replace("á", "a").replace("é", "e")
+        if c in ["nome", "name", "produto", "product", "descricao", "description"]:
+            if name_idx == -1: name_idx = idx
+        elif c in ["quantidade", "qtd", "stock", "estoque", "quantity"]:
+            if qty_idx == -1: qty_idx = idx
+        elif c in ["preco", "price", "valor", "preco_venda", "pv"]:
+            if price_idx == -1: price_idx = idx
+        elif c in ["categoria", "category", "cat"]:
+            if cat_idx == -1: cat_idx = idx
+        elif c in ["codigo", "barcode", "codigo_barra", "sku", "cod"]:
+            if barcode_idx == -1: barcode_idx = idx
+
+    if name_idx == -1:
+        raise HTTPException(
+            status_code=400,
+            detail="Coluna de nome do produto não encontrada. O CSV deve conter uma coluna 'nome' ou 'produto'."
+        )
+
+    # Buscar produtos existentes para ignorar duplicados
+    existing_products = db.query(PDVProduct).filter(
+        PDVProduct.terminal_id == terminal_id,
+        PDVProduct.is_active == True,
+    ).all()
+
+    existing_normalized_names = {_normalize_product_name(p.name) for p in existing_products if p.name}
+
+    imported_count = 0
+    skipped_items = []
+
+    for row_num, row in enumerate(rows[1:], start=2):
+        if not row or all(not str(cell).strip() for cell in row):
+            continue
+
+        raw_name = str(row[name_idx]).strip() if name_idx < len(row) else ""
+        if not raw_name:
+            skipped_items.append({"line": row_num, "name": "(Sem nome)", "reason": "Nome do produto em branco"})
+            continue
+
+        norm_name = _normalize_product_name(raw_name)
+        if norm_name in existing_normalized_names:
+            skipped_items.append({"line": row_num, "name": raw_name, "reason": "Produto já cadastrado"})
+            continue
+
+        # Preço
+        raw_price = str(row[price_idx]).strip() if price_idx != -1 and price_idx < len(row) else "0"
+        raw_price = raw_price.replace("MT", "").replace("R$", "").replace("$", "").replace(" ", "").replace(",", ".").strip()
+        try:
+            price_val = Decimal(raw_price) if raw_price else Decimal("0.00")
+            if price_val < 0: price_val = Decimal("0.00")
+        except (InvalidOperation, ValueError):
+            price_val = Decimal("0.00")
+
+        # Quantidade
+        raw_qty = str(row[qty_idx]).strip() if qty_idx != -1 and qty_idx < len(row) else "0"
+        raw_qty = raw_qty.replace(" ", "").replace(",", ".").strip()
+        try:
+            qty_val = Decimal(raw_qty) if raw_qty else Decimal("0.00")
+            if qty_val < 0: qty_val = Decimal("0.00")
+        except (InvalidOperation, ValueError):
+            qty_val = Decimal("0.00")
+
+        # Categoria e código de barras
+        category_val = str(row[cat_idx]).strip() if cat_idx != -1 and cat_idx < len(row) else "Sem Categoria"
+        if not category_val:
+            category_val = "Sem Categoria"
+
+        barcode_val = str(row[barcode_idx]).strip() if barcode_idx != -1 and barcode_idx < len(row) else None
+        if not barcode_val:
+            barcode_val = None
+
+        # Criar PDVProduct
+        db_product = PDVProduct(
+            terminal_id=terminal_id,
+            name=raw_name,
+            category=category_val,
+            barcode=barcode_val,
+            price=price_val,
+            cost_price=Decimal("0.00"),
+            emoji="📦",
+            is_fastfood=False,
+            track_stock=True,
+            allow_decimal_quantity=False,
+            is_active=True,
+        )
+        db.add(db_product)
+        db.flush()
+
+        # Criar estoque inicial
+        inventory = PDVInventory(
+            product_id=db_product.id,
+            terminal_id=terminal_id,
+            quantity=qty_val,
+            min_quantity=Decimal("0.00"),
+            max_quantity=None,
+            reserved_quantity=Decimal("0.00"),
+            storage_location=CATEGORY_DEFAULT_STOCK_LOCATION,
+        )
+        db.add(inventory)
+
+        # Adicionar aos nomes existentes para ignorar duplicatas do próprio CSV
+        existing_normalized_names.add(norm_name)
+        imported_count += 1
+
+    db.commit()
+
+    return {
+        "imported": imported_count,
+        "skipped": len(skipped_items),
+        "skipped_details": skipped_items,
+    }
+
 
 def update_product(db: Session, product_id: int, updates: schemas.PDVProductUpdate, terminal_id: int):
     product = db.query(PDVProduct).filter(PDVProduct.id == product_id, PDVProduct.terminal_id == terminal_id).first()
