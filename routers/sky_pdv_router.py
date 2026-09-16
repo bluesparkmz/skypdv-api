@@ -1688,8 +1688,11 @@ def get_products_report_pdf(
     pdf_bytes = buffer.getvalue()
 
     filename = f"products_{_fmt_date(issued_at)}.pdf"
-    headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
-    return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Access-Control-Expose-Headers": "Content-Disposition",
+    }
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
 
 @router.get("/reports/periodic", response_model=schemas.SalesSummary)
 def get_periodic_sales_report(
