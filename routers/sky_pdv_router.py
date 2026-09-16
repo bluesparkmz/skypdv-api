@@ -1653,23 +1653,53 @@ def get_products_report_pdf(
     story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)} (UTC)", styles["Normal"]))
     story.append(Spacer(1, 12))
 
-    table_data = [["Produto", "SKU", "Estoque", "Preço"]]
+    table_data = [["Produto", "Estoque", "Preço (MT)", "Total (MT)"]]
+    total_items_count = 0
+    total_stock_qty = Decimal("0.00")
+    total_stock_value = Decimal("0.00")
+
     for p in products:
         inv_qty = None
+        qty_dec = Decimal("0.00")
         if getattr(p, "track_stock", False):
             inv = getattr(p, "inventory", None)
-            inv_qty = getattr(inv, "quantity", None) if inv else None
+            inv_qty = getattr(inv, "quantity", None) if inv else Decimal("0.00")
+            try:
+                qty_dec = Decimal(str(inv_qty)) if inv_qty is not None else Decimal("0.00")
+            except Exception:
+                qty_dec = Decimal("0.00")
+
+        try:
+            price_dec = Decimal(str(getattr(p, "price", 0) or 0))
+        except Exception:
+            price_dec = Decimal("0.00")
+
+        row_total = qty_dec * price_dec if getattr(p, "track_stock", False) else Decimal("0.00")
+
+        total_items_count += 1
+        total_stock_qty += qty_dec
+        total_stock_value += row_total
 
         table_data.append(
             [
                 str(getattr(p, "name", "") or ""),
-                str(getattr(p, "sku", "") or ""),
-                _fmt_2(inv_qty) if getattr(p, "track_stock", False) else "-",
-                _fmt_2(getattr(p, "price", None)),
+                _fmt_2(qty_dec) if getattr(p, "track_stock", False) else "-",
+                _fmt_2(price_dec),
+                _fmt_2(row_total) if getattr(p, "track_stock", False) else "-",
             ]
         )
 
-    products_table = Table(table_data, colWidths=[260, 90, 70, 90], repeatRows=1)
+    # Linha de totalização na tabela
+    table_data.append(
+        [
+            "TOTAL GERAL",
+            _fmt_2(total_stock_qty),
+            "",
+            f"{_fmt_2(total_stock_value)} MT"
+        ]
+    )
+
+    products_table = Table(table_data, colWidths=[240, 80, 95, 95], repeatRows=1)
     products_table.setStyle(
         TableStyle(
             [
@@ -1677,12 +1707,35 @@ def get_products_report_pdf(
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (2, 1), (3, -1), "RIGHT"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#EAEAEA")),
             ]
         )
     )
 
     story.append(products_table)
+    story.append(Spacer(1, 14))
+
+    # Métricas de resumo abaixo da tabela
+    summary_data = [
+        ["Total de Produtos Cadastrados:", f"{total_items_count} produtos"],
+        ["Total de Itens em Estoque:", f"{_fmt_2(total_stock_qty)} unidades"],
+        ["Valor Total do Estoque (Meticais):", f"{_fmt_2(total_stock_value)} MT"],
+    ]
+    summary_table = Table(summary_data, colWidths=[240, 270])
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+                ("TEXTCOLOR", (0, 2), (1, 2), colors.HexColor("#166534")),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    story.append(summary_table)
 
     doc.build(story)
     pdf_bytes = buffer.getvalue()
