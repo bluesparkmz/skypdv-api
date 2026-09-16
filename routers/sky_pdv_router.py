@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 import os
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional
@@ -30,6 +30,13 @@ def get_config():
     """Retorna configurações simples do SkyPDV (flags habilitadas via env)."""
     activate = os.getenv("SKYPDV_ACTIVATE_CHARGING", "false").strip().lower() in ("1", "true", "yes")
     return {"activate_charging": activate}
+
+
+@router.get("/hardware-plugin/download")
+def download_hardware_plugin():
+    """Download do Plugin de Hardware do SkyPDV."""
+    plugin_url = os.getenv("SKYPDV_HARDWARE_PLUGIN_URL", "https://storage.bluesparkmz.com/plugin_skypdv.zip")
+    return RedirectResponse(url=plugin_url)
 
 
 def _mt_val(mt):
