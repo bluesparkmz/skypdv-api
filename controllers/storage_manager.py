@@ -27,11 +27,65 @@ SKYPDV_PREFIX = "skypdv"
 SKYPDV_PRODUCT_FOLDER = f"{SKYPDV_PREFIX}/products"
 SKYPDV_INVOICE_FOLDER = f"{SKYPDV_PREFIX}/invoices"
 
+# WebP conversion settings
+WEBP_QUALITY = 82           # 0-100 — good balance between quality and size
+WEBP_MAX_DIMENSION = 1920   # max width or height in pixels
+MAX_UPLOAD_BYTES = 12 * 1024 * 1024  # 12 MB raw input limit
+
 
 def _public_url(key: str) -> str:
     base = R2_PUBLIC_URL.rstrip("/")
     clean_key = (key or "").lstrip("/")
     return f"{base}/{clean_key}"
+
+
+def _convert_to_webp(data: bytes) -> bytes:
+    """
+    Validate the image, optionally downscale it so neither dimension
+    exceeds WEBP_MAX_DIMENSION, then re-encode as WebP at WEBP_QUALITY.
+    Returns the resulting WebP bytes — always smaller than PNG/JPEG of
+    the same visual quality.
+    """
+    if not data:
+        raise HTTPException(status_code=400, detail="Imagem vazia.")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Imagem muito grande. Maximo permitido: 12MB.")
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.verify()
+        # verify() closes the file; reopen for actual use
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(status_code=400, detail="Arquivo de imagem invalido ou corrompido.")
+
+    fmt = (img.format or "").upper()
+    if fmt not in {"JPEG", "JPG", "PNG", "WEBP", "GIF", "BMP"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Formato de imagem nao permitido. Use JPEG, PNG, WebP ou GIF.",
+        )
+
+    # Normalise colour mode — WebP needs RGB or RGBA
+    if img.mode in ("P", "LA"):
+        img = img.convert("RGBA")
+    if img.mode == "RGBA":
+        # Flatten transparency on white background
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[3])
+        img = background
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    # Downscale if needed (preserves aspect ratio)
+    w, h = img.size
+    if w > WEBP_MAX_DIMENSION or h > WEBP_MAX_DIMENSION:
+        img.thumbnail((WEBP_MAX_DIMENSION, WEBP_MAX_DIMENSION), Image.LANCZOS)
+
+    out = io.BytesIO()
+    img.save(out, format="WEBP", quality=WEBP_QUALITY, method=6)
+    return out.getvalue()
 
 
 class StorageManager:
@@ -51,46 +105,31 @@ class StorageManager:
             region_name="auto",
         )
 
-    def _sanitize_image_bytes(self, data: bytes) -> tuple[bytes, str, str]:
-        if not data:
-            raise HTTPException(status_code=400, detail="Imagem vazia.")
-        if len(data) > 12 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="Imagem muito grande. Maximo permitido: 12MB.")
-
-        try:
-            img = Image.open(io.BytesIO(data))
-            img.verify()
-            img = Image.open(io.BytesIO(data))
-            img.load()
-        except (UnidentifiedImageError, OSError):
-            raise HTTPException(status_code=400, detail="Arquivo de imagem invalido ou corrompido.")
-
-        fmt = (img.format or "").upper()
-        if fmt not in {"JPEG", "JPG", "PNG", "WEBP", "GIF"}:
-            raise HTTPException(status_code=400, detail="Formato de imagem nao permitido.")
-
-        ext_map = {"JPEG": "jpg", "JPG": "jpg", "PNG": "png", "WEBP": "webp", "GIF": "gif"}
-        ct_map = {
-            "JPEG": "image/jpeg",
-            "JPG": "image/jpeg",
-            "PNG": "image/png",
-            "WEBP": "image/webp",
-            "GIF": "image/gif",
-        }
-        return data, ext_map[fmt], ct_map[fmt]
-
     def upload_file(
         self,
         file: UploadFile,
         destination_folder: str,
         custom_filename: str | None = None,
     ) -> str:
+        """
+        Read the uploaded file, convert it to WebP, and store it in
+        Cloudflare R2 under destination_folder/. Returns the public URL.
+        """
         if not file:
             raise HTTPException(status_code=400, detail="No file sent")
 
-        data = file.file.read()
-        data, sanitized_ext, content_type = self._sanitize_image_bytes(data)
-        filename = custom_filename or f"{uuid.uuid4().hex}.{sanitized_ext}"
+        raw = file.file.read()
+
+        # Convert to WebP (validates + resizes + re-encodes)
+        webp_data = _convert_to_webp(raw)
+
+        # Always store as .webp
+        base_name = custom_filename or uuid.uuid4().hex
+        # Strip any existing extension and force .webp
+        if "." in base_name:
+            base_name = base_name.rsplit(".", 1)[0]
+        filename = f"{base_name}.webp"
+
         folder = (destination_folder or "").strip("/")
         key = f"{folder}/{filename}" if folder else filename
 
@@ -98,9 +137,11 @@ class StorageManager:
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
                 Key=key,
-                Body=data,
-                ContentType=content_type,
+                Body=webp_data,
+                ContentType="image/webp",
             )
             return _public_url(key)
         except Exception as exc:
+            if isinstance(exc, HTTPException):
+                raise
             raise HTTPException(status_code=500, detail=f"Erro ao salvar arquivo: {str(exc)}") from exc
