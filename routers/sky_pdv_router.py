@@ -1620,17 +1620,23 @@ def get_products_report_pdf(
             return ""
         return dt.strftime("%d/%m/%Y")
 
-    def _fmt_2(v) -> str:
+    def _fmt_money(v) -> str:
         if v is None:
-            return "0.00"
-        if isinstance(v, bool):
-            return "1.00" if v else "0.00"
-        if isinstance(v, int):
-            return f"{v:.2f}"
-        if isinstance(v, Decimal):
-            return f"{v:.2f}"
+            return "0.00 MT"
         try:
-            return f"{float(v):.2f}"
+            val = float(v)
+            return f"{val:,.2f} MT"
+        except Exception:
+            return f"{str(v)} MT"
+
+    def _fmt_qty(v) -> str:
+        if v is None:
+            return "0"
+        try:
+            val = float(v)
+            if val == int(val):
+                return f"{int(val):,}"
+            return f"{val:,.2f}"
         except Exception:
             return str(v)
 
@@ -1653,7 +1659,7 @@ def get_products_report_pdf(
     story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)} (UTC)", styles["Normal"]))
     story.append(Spacer(1, 12))
 
-    table_data = [["Produto", "Estoque", "Preço (MT)", "Total (MT)"]]
+    table_data = [["Produto", "Estoque", "Preço Unitário", "Total"]]
     total_items_count = 0
     total_stock_qty = Decimal("0.00")
     total_stock_value = Decimal("0.00")
@@ -1683,9 +1689,9 @@ def get_products_report_pdf(
         table_data.append(
             [
                 str(getattr(p, "name", "") or ""),
-                _fmt_2(qty_dec) if getattr(p, "track_stock", False) else "-",
-                _fmt_2(price_dec),
-                _fmt_2(row_total) if getattr(p, "track_stock", False) else "-",
+                _fmt_qty(qty_dec) if getattr(p, "track_stock", False) else "-",
+                _fmt_money(price_dec),
+                _fmt_money(row_total) if getattr(p, "track_stock", False) else "-",
             ]
         )
 
@@ -1693,37 +1699,45 @@ def get_products_report_pdf(
     table_data.append(
         [
             "TOTAL GERAL",
-            _fmt_2(total_stock_qty),
+            _fmt_qty(total_stock_qty),
             "",
-            f"{_fmt_2(total_stock_value)} MT"
+            _fmt_money(total_stock_value)
         ]
     )
 
-    products_table = Table(table_data, colWidths=[240, 80, 95, 95], repeatRows=1)
-    products_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#EAEAEA")),
-            ]
-        )
-    )
+    t_styles = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9.5),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2E8F0")),
+    ]
+
+    # Zebra striping para facilitar a leitura linha a linha
+    for i in range(1, len(table_data) - 1):
+        if i % 2 == 0:
+            t_styles.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#F8FAFC")))
+
+    products_table = Table(table_data, colWidths=[220, 80, 110, 110], repeatRows=1)
+    products_table.setStyle(TableStyle(t_styles))
 
     story.append(products_table)
     story.append(Spacer(1, 14))
 
     # Métricas de resumo abaixo da tabela
     summary_data = [
-        ["Total de Produtos Cadastrados:", f"{total_items_count} produtos"],
-        ["Total de Itens em Estoque:", f"{_fmt_2(total_stock_qty)} unidades"],
-        ["Valor Total do Estoque (Meticais):", f"{_fmt_2(total_stock_value)} MT"],
+        ["Total de Produtos Cadastrados:", f"{total_items_count:,} produtos"],
+        ["Total de Itens em Estoque:", f"{_fmt_qty(total_stock_qty)} unidades"],
+        ["Valor Total do Estoque:", f"{_fmt_money(total_stock_value)}"],
     ]
-    summary_table = Table(summary_data, colWidths=[240, 270])
+    summary_table = Table(summary_data, colWidths=[240, 280])
     summary_table.setStyle(
         TableStyle(
             [
