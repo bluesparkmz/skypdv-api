@@ -1414,9 +1414,16 @@ def update_product(db: Session, product_id: int, updates: schemas.PDVProductUpda
     if updates.name is not None:
         _ensure_unique_product_name(db, terminal_id, updates.name, exclude_product_id=product_id)
 
-    update_data = updates.dict(exclude_unset=True)
+    try:
+        update_data = updates.model_dump(exclude_unset=True)
+    except AttributeError:
+        update_data = updates.dict(exclude_unset=True)
     supplier_id = update_data.pop("supplier_id", None) if "supplier_id" in update_data else None
     initial_stock = update_data.pop("initial_stock", None) if "initial_stock" in update_data else None
+
+    if "category" in update_data:
+        raw_category = update_data["category"]
+        update_data["category"] = str(raw_category).strip() if raw_category else None
 
     if "supplier_id" in updates.model_fields_set:
         if supplier_id is None:
@@ -3727,35 +3734,52 @@ def update_category(db: Session, category_id: int, updates: schemas.PDVCategoryU
     ).first()
     if not category:
         raise HTTPException(status_code=404, detail="Categoria não encontrada")
-        
-    old_name = category.name
-    update_data = updates.dict(exclude_unset=True)
-    new_name = update_data.get("name")
-    
-    if new_name and str(new_name).strip().lower() != str(old_name or "").strip().lower():
-        clean_new_name = str(new_name).strip()
-        conflict = db.query(PDVCategory).filter(
-            PDVCategory.terminal_id == terminal_id,
-            PDVCategory.id != category_id,
-            func.lower(PDVCategory.name) == clean_new_name.lower(),
-            PDVCategory.is_active == True
-        ).first()
-        if conflict:
-            raise HTTPException(status_code=400, detail="Já existe outra categoria com este nome na sua empresa")
-        update_data["name"] = clean_new_name
 
-    for field, value in update_data.items():
-        setattr(category, field, value)
-        
+    old_name = str(category.name or "").strip()
+    try:
+        update_data = updates.model_dump(exclude_unset=True)
+    except AttributeError:
+        update_data = updates.dict(exclude_unset=True)
+
+    if "name" in update_data and update_data["name"] is not None:
+        clean_new_name = str(update_data["name"]).strip()
+        if not clean_new_name:
+            raise HTTPException(status_code=400, detail="Nome da categoria é obrigatório")
+        if clean_new_name.lower() != old_name.lower():
+            conflict = db.query(PDVCategory).filter(
+                PDVCategory.terminal_id == terminal_id,
+                PDVCategory.id != category_id,
+                func.lower(PDVCategory.name) == clean_new_name.lower(),
+                PDVCategory.is_active == True
+            ).first()
+            if conflict:
+                raise HTTPException(status_code=400, detail="Já existe outra categoria com este nome na sua empresa")
+        category.name = clean_new_name
+
+    if "description" in update_data:
+        description = update_data["description"]
+        category.description = str(description).strip() if description else None
+
+    if "icon" in update_data and update_data["icon"] is not None:
+        category.icon = str(update_data["icon"]).strip() or category.icon
+
+    if "color" in update_data and update_data["color"] is not None:
+        category.color = str(update_data["color"]).strip() or category.color
+
+    if "is_active" in update_data and update_data["is_active"] is not None:
+        category.is_active = bool(update_data["is_active"])
+
+    category.updated_at = datetime.utcnow()
+    db.add(category)
     db.commit()
     db.refresh(category)
 
-    # Sincronizar produtos com o novo nome da categoria
-    if new_name and old_name and str(new_name).strip() != str(old_name).strip():
+    new_name = str(category.name or "").strip()
+    if old_name and new_name and old_name != new_name:
         db.query(PDVProduct).filter(
             PDVProduct.terminal_id == terminal_id,
-            PDVProduct.category == str(old_name).strip()
-        ).update({"category": str(new_name).strip()}, synchronize_session=False)
+            func.lower(func.trim(PDVProduct.category)) == old_name.lower(),
+        ).update({PDVProduct.category: new_name}, synchronize_session=False)
         db.commit()
 
     return category

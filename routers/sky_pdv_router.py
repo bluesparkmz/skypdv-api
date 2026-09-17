@@ -1888,6 +1888,7 @@ def adopt_category(
     terminal = controller.get_terminal_required(db, current_user.id)
     return controller.adopt_category(db, category_id, terminal.id, current_user.id)
 
+@router.patch("/categories-list/{category_id}", response_model=schemas.PDVCategory)
 @router.put("/categories-list/{category_id}", response_model=schemas.PDVCategory)
 def update_category(
     category_id: int,
