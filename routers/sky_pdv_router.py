@@ -32,13 +32,6 @@ def get_config():
     return {"activate_charging": activate}
 
 
-@router.get("/hardware-plugin/download")
-def download_hardware_plugin():
-    """Download do Plugin de Hardware do SkyPDV."""
-    plugin_url = os.getenv("SKYPDV_HARDWARE_PLUGIN_URL", "https://storage.bluesparkmz.com/plugin_skypdv.zip")
-    return RedirectResponse(url=plugin_url)
-
-
 def _mt_val(mt):
     """Normalize a movement_type value to a plain string value."""
     try:

@@ -141,30 +141,6 @@ def create_terminal_for_user(db: Session, user_id: int, data: schemas.PDVTermina
     db.add(local_supplier)
     db.commit()
 
-    # Criar categorias padrÃ£o
-    default_categories = [
-        {"name": "Alimentos", "icon": "ðŸ”", "color": "#10b981"},
-        {"name": "Bebidas", "icon": "ðŸ¥¤", "color": "#3b82f6"},
-        {"name": "EletrÃ´nicos", "icon": "ðŸ“±", "color": "#8b5cf6"},
-        {"name": "VestuÃ¡rio", "icon": "ðŸ‘•", "color": "#ec4899"},
-        {"name": "Higiene", "icon": "ðŸ§´", "color": "#06b6d4"},
-        {"name": "Limpeza", "icon": "ðŸ§¹", "color": "#f59e0b"},
-        {"name": "Papelaria", "icon": "ðŸ“", "color": "#6366f1"},
-        {"name": "FarmÃ¡cia", "icon": "ðŸ’Š", "color": "#ef4444"},
-        {"name": "Outros", "icon": "ðŸ“¦", "color": "#64748b"},
-    ]
-    
-    for cat_data in default_categories:
-        category = PDVCategory(
-            terminal_id=terminal.id,
-            name=cat_data["name"],
-            icon=cat_data["icon"],
-            color=cat_data["color"],
-            is_global=False,
-            is_active=True,
-        )
-        db.add(category)
-
     default_expense_categories = [
         {"name": "Renda da Loja", "code": "aluguel", "icon": "store", "color": "#ef4444"},
         {"name": "SalÃ¡rio", "code": "salario", "icon": "users", "color": "#f59e0b"},
@@ -843,10 +819,10 @@ def get_categories(db: Session, terminal_id: int):
 
 
 def get_product_categories(db: Session, terminal_id: int):
-    """Listar categorias usadas no terminal + categorias geridas ativas."""
+    """Listar categorias usadas no terminal + categorias geridas ativas da empresa."""
     product_categories = get_categories(db, terminal_id)
     managed_categories = db.query(PDVCategory.name).filter(
-        or_(PDVCategory.terminal_id == terminal_id, PDVCategory.is_global == True),
+        PDVCategory.terminal_id == terminal_id,
         PDVCategory.is_active == True,
     ).all()
 
@@ -3637,19 +3613,13 @@ def delete_product(db: Session, product_id: int, terminal_id: int):
 # ===================================================================
 
 def get_categories_list(db: Session, terminal_id: int):
-    """Listar categorias do terminal + categorias globais"""
-    # Categorias do prÃ³prio terminal
+    """Listar categorias cadastradas exclusivamente pela empresa (terminal). Sem dados mock."""
+    # Buscar categorias ativas cadastradas pela empresa
     own_categories = db.query(PDVCategory).filter(
         PDVCategory.terminal_id == terminal_id,
         PDVCategory.is_active == True
-    ).all()
-    
-    # Categorias globais (compartilhadas)
-    global_categories = db.query(PDVCategory).filter(
-        PDVCategory.is_global == True,
-        PDVCategory.is_active == True
-    ).all()
-    
+    ).order_by(PDVCategory.name.asc()).all()
+
     # Contar produtos ativos por nome de categoria no terminal
     product_count_rows = (
         db.query(
@@ -3671,20 +3641,53 @@ def get_categories_list(db: Session, terminal_id: int):
         if row[0]
     }
 
-    # Combinar e remover duplicatas
-    all_categories = {cat.id: cat for cat in own_categories + global_categories}
-    for category in all_categories.values():
+    for category in own_categories:
         key = str(category.name or "").strip().lower()
         setattr(category, "product_count", count_by_category_name.get(key, 0))
-    return list(all_categories.values())
+
+    return own_categories
 
 def create_category(db: Session, category: schemas.PDVCategoryCreate, terminal_id: int, user_id: int, is_global: bool = False):
-    """Criar nova categoria (pessoal ou global)"""
+    """Criar nova categoria vinculada exclusivamente ao terminal da empresa"""
+    name_clean = category.name.strip()
+    
+    # Verificar se já existe ativa na mesma empresa
+    existing = db.query(PDVCategory).filter(
+        PDVCategory.terminal_id == terminal_id,
+        func.lower(PDVCategory.name) == name_clean.lower(),
+        PDVCategory.is_active == True
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Já existe uma categoria com este nome na sua empresa")
+
+    # Se existir uma inativa, reativa com os novos dados
+    inactive = db.query(PDVCategory).filter(
+        PDVCategory.terminal_id == terminal_id,
+        func.lower(PDVCategory.name) == name_clean.lower(),
+        PDVCategory.is_active == False
+    ).first()
+    if inactive:
+        inactive.is_active = True
+        inactive.name = name_clean
+        if category.icon:
+            inactive.icon = category.icon
+        if category.color:
+            inactive.color = category.color
+        if category.description is not None:
+            inactive.description = category.description
+        db.commit()
+        db.refresh(inactive)
+        return inactive
+
     db_category = PDVCategory(
-        terminal_id=None if is_global else terminal_id,
+        terminal_id=terminal_id,
         created_by=user_id,
-        is_global=is_global,
-        **category.dict()
+        is_global=False,
+        name=name_clean,
+        description=category.description,
+        icon=category.icon or "🏷️",
+        color=category.color or "#2563eb",
+        is_active=True
     )
     db.add(db_category)
     db.commit()
@@ -3692,24 +3695,24 @@ def create_category(db: Session, category: schemas.PDVCategoryCreate, terminal_i
     return db_category
 
 def adopt_category(db: Session, category_id: int, terminal_id: int, user_id: int):
-    """Adotar uma categoria global para o terminal"""
-    global_cat = db.query(PDVCategory).filter(
-        PDVCategory.id == category_id,
-        PDVCategory.is_global == True
+    """Adotar uma categoria para o terminal"""
+    source_cat = db.query(PDVCategory).filter(
+        PDVCategory.id == category_id
     ).first()
     
-    if not global_cat:
-        raise HTTPException(status_code=404, detail="Global category not found")
+    if not source_cat:
+        raise HTTPException(status_code=404, detail="Categoria não encontrada")
     
-    # Criar cÃ³pia para o terminal
+    # Criar cópia para o terminal
     new_cat = PDVCategory(
         terminal_id=terminal_id,
         created_by=user_id,
-        name=global_cat.name,
-        description=global_cat.description,
-        icon=global_cat.icon,
-        color=global_cat.color,
-        is_global=False
+        name=source_cat.name,
+        description=source_cat.description,
+        icon=source_cat.icon,
+        color=source_cat.color,
+        is_global=False,
+        is_active=True
     )
     db.add(new_cat)
     db.commit()
@@ -3717,28 +3720,58 @@ def adopt_category(db: Session, category_id: int, terminal_id: int, user_id: int
     return new_cat
 
 def update_category(db: Session, category_id: int, updates: schemas.PDVCategoryUpdate, terminal_id: int):
-    """Atualizar categoria"""
-    category = db.query(PDVCategory).filter(PDVCategory.id == category_id, PDVCategory.terminal_id == terminal_id).first()
+    """Atualizar categoria da empresa e sincronizar produtos se o nome mudar"""
+    category = db.query(PDVCategory).filter(
+        PDVCategory.id == category_id,
+        PDVCategory.terminal_id == terminal_id
+    ).first()
     if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
+        raise HTTPException(status_code=404, detail="Categoria não encontrada")
         
+    old_name = category.name
     update_data = updates.dict(exclude_unset=True)
+    new_name = update_data.get("name")
+    
+    if new_name and str(new_name).strip().lower() != str(old_name or "").strip().lower():
+        clean_new_name = str(new_name).strip()
+        conflict = db.query(PDVCategory).filter(
+            PDVCategory.terminal_id == terminal_id,
+            PDVCategory.id != category_id,
+            func.lower(PDVCategory.name) == clean_new_name.lower(),
+            PDVCategory.is_active == True
+        ).first()
+        if conflict:
+            raise HTTPException(status_code=400, detail="Já existe outra categoria com este nome na sua empresa")
+        update_data["name"] = clean_new_name
+
     for field, value in update_data.items():
         setattr(category, field, value)
         
     db.commit()
     db.refresh(category)
+
+    # Sincronizar produtos com o novo nome da categoria
+    if new_name and old_name and str(new_name).strip() != str(old_name).strip():
+        db.query(PDVProduct).filter(
+            PDVProduct.terminal_id == terminal_id,
+            PDVProduct.category == str(old_name).strip()
+        ).update({"category": str(new_name).strip()}, synchronize_session=False)
+        db.commit()
+
     return category
 
 def delete_category(db: Session, category_id: int, terminal_id: int):
-    """Desativar categoria"""
-    category = db.query(PDVCategory).filter(PDVCategory.id == category_id, PDVCategory.terminal_id == terminal_id).first()
+    """Desativar categoria da empresa"""
+    category = db.query(PDVCategory).filter(
+        PDVCategory.id == category_id,
+        PDVCategory.terminal_id == terminal_id
+    ).first()
     if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
+        raise HTTPException(status_code=404, detail="Categoria não encontrada")
     
     category.is_active = False
     db.commit()
-    return {"message": "Category deactivated successfully"}
+    return {"message": "Categoria desativada com sucesso"}
 
 # ===================================================================
 # Payment Methods Management
