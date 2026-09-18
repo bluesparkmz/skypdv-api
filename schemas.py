@@ -232,7 +232,7 @@ class PDVProductBase(BaseModel):
     description: Optional[str] = None
     category: Optional[str] = None
     cost_price: Optional[Decimal] = Decimal("0.00")
-    price: Decimal = Field(..., gt=0)
+    price: Decimal = Field(..., ge=0)
     promotional_price: Optional[Decimal] = None
     image: Optional[str] = None
     emoji: Optional[str] = None  # Emoji para exibição no frontend
