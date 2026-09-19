@@ -826,6 +826,275 @@ def cancel_outflow(
     terminal = controller.get_terminal_required(db, current_user.id)
     return controller.cancel_outflow(db, outflow_id, terminal.id, current_user.id)
 
+
+@router.get("/outflows/report.pdf")
+def get_outflows_report_pdf(
+    outflow_type: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Gera relatório PDF das saídas (produtos e/ou dinheiro) filtradas por período e tipo."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, HRFlowable
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+    from models import PDVOutflow as PDVOutflowModel, User as UserModel
+
+    terminal = controller.get_terminal_required(db, current_user.id)
+    currency = terminal.currency or "MT"
+
+    # Default: if no dates, use today
+    if not start_date:
+        start_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    if not end_date:
+        end_date = datetime.utcnow()
+
+    # Build query
+    q = db.query(PDVOutflowModel).filter(
+        PDVOutflowModel.terminal_id == terminal.id,
+        PDVOutflowModel.is_active == True,
+        PDVOutflowModel.created_at >= start_date,
+        PDVOutflowModel.created_at <= end_date,
+    )
+    if outflow_type:
+        q = q.filter(PDVOutflowModel.outflow_type == outflow_type)
+    outflows = q.order_by(PDVOutflowModel.created_at.desc()).all()
+
+    # Fetch user names in one shot
+    user_ids = list({o.created_by for o in outflows if o.created_by})
+    users_map: dict = {}
+    if user_ids:
+        users = db.query(UserModel).filter(UserModel.id.in_(user_ids)).all()
+        users_map = {u.id: (u.name or u.username or str(u.id)) for u in users}
+
+    REASON_LABELS = {
+        "consumo_interno": "Consumo interno",
+        "cafetaria": "Cafetaria",
+        "cozinha": "Cozinha",
+        "perda": "Perda / Avaria",
+        "despesa_diaria": "Despesa diária",
+        "outro": "Outro",
+    }
+
+    def _fmt_dt(dt) -> str:
+        if not dt:
+            return ""
+        return dt.strftime("%d/%m/%Y %H:%M")
+
+    def _fmt_date(dt) -> str:
+        if not dt:
+            return ""
+        return dt.strftime("%d/%m/%Y")
+
+    def _fmt_money(v) -> str:
+        try:
+            return f"{float(v):,.2f}"
+        except Exception:
+            return "0.00"
+
+    def _fmt_qty(v) -> str:
+        try:
+            val = float(v)
+            return str(int(val)) if val == int(val) else f"{val:.2f}"
+        except Exception:
+            return "0"
+
+    # KPIs
+    product_outflows = [o for o in outflows if o.outflow_type == "product"]
+    cash_outflows = [o for o in outflows if o.outflow_type == "cash"]
+    total_qty = sum(float(o.quantity or 0) for o in product_outflows)
+    total_cash = sum(float(o.amount or 0) for o in cash_outflows)
+
+    # Build PDF
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=20*mm, rightMargin=20*mm,
+        topMargin=18*mm, bottomMargin=18*mm,
+    )
+    styles = getSampleStyleSheet()
+    orange = colors.HexColor("#F97316")
+    dark = colors.HexColor("#1E1E2E")
+    light_gray = colors.HexColor("#F4F4F5")
+    mid_gray = colors.HexColor("#A1A1AA")
+    white = colors.white
+
+    title_style = ParagraphStyle(
+        "Title", parent=styles["Title"],
+        fontSize=18, textColor=dark, spaceAfter=2,
+    )
+    subtitle_style = ParagraphStyle(
+        "Sub", parent=styles["Normal"],
+        fontSize=9, textColor=mid_gray,
+    )
+    section_style = ParagraphStyle(
+        "Section", parent=styles["Heading2"],
+        fontSize=11, textColor=dark, spaceBefore=12, spaceAfter=4,
+    )
+    cell_style = ParagraphStyle(
+        "Cell", parent=styles["Normal"],
+        fontSize=8, leading=10,
+    )
+
+    story = []
+
+    # ── Header block ──────────────────────────────────────────
+    story.append(Paragraph(terminal.name or "SkyPDV", title_style))
+    if terminal.address:
+        story.append(Paragraph(terminal.address, subtitle_style))
+    story.append(Spacer(1, 4))
+    story.append(HRFlowable(width="100%", thickness=2, color=orange, spaceAfter=8))
+
+    # Title + meta
+    type_label = {
+        "product": "Saídas de Produtos",
+        "cash": "Despesas de Caixa",
+    }.get(outflow_type or "", "Todas as Saídas")
+    story.append(Paragraph(f"Relatório de Saídas — {type_label}", section_style))
+    story.append(Paragraph(
+        f"Período: {_fmt_date(start_date)} até {_fmt_date(end_date)}",
+        subtitle_style,
+    ))
+    story.append(Paragraph(
+        f"Emitido em: {_fmt_dt(datetime.utcnow())}  |  Total de registos: {len(outflows)}",
+        subtitle_style,
+    ))
+    story.append(Spacer(1, 10))
+
+    # ── KPI cards (simple table) ───────────────────────────────
+    kpi_data = [
+        [
+            Paragraph("<b>Produtos Retirados</b>", cell_style),
+            Paragraph("<b>Despesas de Caixa</b>", cell_style),
+            Paragraph("<b>Total de Registos</b>", cell_style),
+        ],
+        [
+            Paragraph(f"<font size='14'><b>{_fmt_qty(total_qty)} un.</b></font>", cell_style),
+            Paragraph(f"<font size='14'><b>{_fmt_money(total_cash)} {currency}</b></font>", cell_style),
+            Paragraph(f"<font size='14'><b>{len(outflows)}</b></font>", cell_style),
+        ],
+        [
+            Paragraph(f"{len(product_outflows)} saída(s)", cell_style),
+            Paragraph(f"{len(cash_outflows)} saída(s)", cell_style),
+            Paragraph(f"Filtro: {type_label}", cell_style),
+        ],
+    ]
+    col_w = (doc.width) / 3
+    kpi_table = Table(kpi_data, colWidths=[col_w, col_w, col_w])
+    kpi_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), light_gray),
+        ("BACKGROUND", (0, 1), (-1, 2), white),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E4E4E7")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#E4E4E7")),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(kpi_table)
+    story.append(Spacer(1, 14))
+
+    # ── Detail table ──────────────────────────────────────────
+    story.append(Paragraph("Detalhe dos Registos", section_style))
+
+    headers = ["ID", "Data / Hora", "Tipo", "Motivo", "Item / Descrição", "Destino", "Operador", "Qtd / Valor"]
+    col_widths = [18, 38, 28, 36, 78, 46, 46, 36]  # in points (total ≈ 326 pt = A4 usable)
+    # Rescale to actual doc width
+    total_w = sum(col_widths)
+    scale = doc.width / total_w
+    col_widths = [w * scale for w in col_widths]
+
+    table_data = [headers]
+    for o in outflows:
+        is_product = str(o.outflow_type).endswith("product")
+        if is_product:
+            val_str = f"{_fmt_qty(o.quantity)} un."
+        else:
+            val_str = f"{_fmt_money(o.amount)} {currency}"
+
+        operator = users_map.get(o.created_by, "—") if o.created_by else "—"
+        reason = REASON_LABELS.get(o.reason or "", o.reason or "—")
+        tipo = "Produto" if is_product else "Caixa"
+        item = o.product.name if (o.product and o.product.name) else (o.title or "—")
+        destino = o.destination or "—"
+
+        table_data.append([
+            f"#{o.id}",
+            _fmt_dt(o.created_at),
+            tipo,
+            reason,
+            item,
+            destino,
+            operator,
+            val_str,
+        ])
+
+    # Add totals row
+    table_data.append([
+        "TOTAL", "", "", "", "", "", "",
+        f"{_fmt_qty(total_qty)} un.\n{_fmt_money(total_cash)} {currency}",
+    ])
+
+    detail_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    detail_table.setStyle(TableStyle([
+        # Header row
+        ("BACKGROUND", (0, 0), (-1, 0), orange),
+        ("TEXTCOLOR", (0, 0), (-1, 0), white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 7),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("VALIGN", (0, 0), (-1, 0), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, 0), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
+        # Data rows
+        ("FONTSIZE", (0, 1), (-1, -2), 7),
+        ("FONTNAME", (0, 1), (-1, -2), "Helvetica"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [white, light_gray]),
+        ("ALIGN", (0, 1), (-1, -2), "LEFT"),
+        ("ALIGN", (-1, 1), (-1, -2), "RIGHT"),
+        ("VALIGN", (0, 1), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 1), (-1, -2), 4),
+        ("BOTTOMPADDING", (0, 1), (-1, -2), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        # Totals row
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#FFF7ED")),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, -1), (-1, -1), 7),
+        ("SPAN", (0, -1), (-2, -1)),
+        ("ALIGN", (-1, -1), (-1, -1), "RIGHT"),
+        # Grid
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E4E4E7")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#E4E4E7")),
+    ]))
+    story.append(detail_table)
+
+    # Footer
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=mid_gray))
+    story.append(Paragraph(
+        f"SkyPDV — Gerado em {_fmt_dt(datetime.utcnow())}",
+        ParagraphStyle("Footer", parent=styles["Normal"], fontSize=7, textColor=mid_gray, alignment=TA_CENTER),
+    ))
+
+    doc.build(story)
+    buffer.seek(0)
+
+    period_str = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
+    filename = f"saidas-{period_str}.pdf"
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 # ===================================================================
 # Sales Endpoints
 # ===================================================================
