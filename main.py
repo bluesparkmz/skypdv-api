@@ -81,6 +81,26 @@ def _ensure_account_columns():
         print(f"Account columns migration error: {exc}")
 
 
+def _ensure_outflow_schema():
+    try:
+        with engine.begin() as conn:
+            inspector = inspect(conn)
+            tables = inspector.get_table_names()
+            if "pdv_cash_registers" in tables:
+                existing = {col["name"] for col in inspector.get_columns("pdv_cash_registers")}
+                if "total_withdrawals" not in existing:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE pdv_cash_registers "
+                            "ADD COLUMN total_withdrawals NUMERIC(14,2) NOT NULL DEFAULT 0.00"
+                        )
+                    )
+            if "pdv_outflows" not in tables:
+                Base.metadata.create_all(bind=conn, tables=[models.PDVOutflow.__table__])
+    except Exception as exc:
+        print(f"Outflow schema migration error: {exc}")
+
+
 def _cash_register_expiry_worker():
     while True:
         db = SessionLocal()
@@ -111,6 +131,7 @@ def start_cash_register_expiry_worker():
     if _cash_register_worker_started:
         return
     _ensure_account_columns()
+    _ensure_outflow_schema()
     db = SessionLocal()
     try:
         controller.ensure_monthly_tax_records(db)

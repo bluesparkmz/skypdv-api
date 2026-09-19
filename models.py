@@ -22,6 +22,11 @@ class MovementType(str, enum.Enum):
     TRANSFER = "transfer"
 
 
+class OutflowType(str, enum.Enum):
+    PRODUCT = "product"
+    CASH = "cash"
+
+
 class PaymentMethod(str, enum.Enum):
     CASH = "cash"
     CARD = "card"
@@ -261,6 +266,7 @@ class PDVCashRegister(Base):
     total_mpesa = Column(DECIMAL(14, 2), default=0.00)
     total_sales = Column(DECIMAL(14, 2), default=0.00)
     total_refunds = Column(DECIMAL(14, 2), default=0.00)
+    total_withdrawals = Column(DECIMAL(14, 2), default=0.00)
     sales_count = Column(Integer, default=0)
     refunds_count = Column(Integer, default=0)
     status = Column(String(20), default="open")
@@ -565,4 +571,32 @@ class PDVServiceOrder(Base):
     terminal = relationship("PDVTerminal", back_populates="service_orders")
     service = relationship("PDVService", back_populates="orders")
     cash_register = relationship("PDVCashRegister")
+    created_by_user = relationship("User", foreign_keys=[created_by])
+
+
+class PDVOutflow(Base):
+    __tablename__ = "pdv_outflows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=False)
+    outflow_type = Column(Enum(OutflowType), nullable=False)
+    reason = Column(String(60), nullable=False)
+    destination = Column(String(120), nullable=True)
+    title = Column(String(255), nullable=False)
+    notes = Column(Text, nullable=True)
+    product_id = Column(Integer, ForeignKey("pdv_products.id", ondelete="SET NULL"), nullable=True)
+    storage_location = Column(String(50), nullable=True)
+    quantity = Column(DECIMAL(14, 3), nullable=True)
+    amount = Column(DECIMAL(14, 2), nullable=True)
+    cash_register_id = Column(Integer, ForeignKey("pdv_cash_registers.id", ondelete="SET NULL"), nullable=True)
+    expense_id = Column(Integer, ForeignKey("pdv_expenses.id", ondelete="SET NULL"), nullable=True)
+    stock_movement_id = Column(Integer, ForeignKey("pdv_stock_movements.id", ondelete="SET NULL"), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+
+    product = relationship("PDVProduct")
+    cash_register = relationship("PDVCashRegister")
+    expense = relationship("PDVExpense")
+    stock_movement = relationship("PDVStockMovement")
     created_by_user = relationship("User", foreign_keys=[created_by])

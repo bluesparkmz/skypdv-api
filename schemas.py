@@ -544,6 +544,7 @@ class PDVCashRegister(BaseModel):
     total_mpesa: Decimal
     total_sales: Decimal
     total_refunds: Decimal
+    total_withdrawals: Decimal = Decimal("0.00")
     sales_count: int
     refunds_count: int
     status: str
@@ -1173,6 +1174,53 @@ class PDVServiceOrderResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class OutflowTypeEnum(str, Enum):
+    PRODUCT = "product"
+    CASH = "cash"
+
+
+class PDVOutflowCreate(BaseModel):
+    outflow_type: OutflowTypeEnum
+    reason: str = Field(..., min_length=1, max_length=60)
+    destination: Optional[str] = Field(default=None, max_length=120)
+    title: Optional[str] = Field(default=None, max_length=255)
+    notes: Optional[str] = None
+    product_id: Optional[int] = None
+    storage_location: Optional[str] = "balcao"
+    quantity: Optional[Decimal] = None
+    amount: Optional[Decimal] = None
+
+
+class PDVOutflow(BaseModel):
+    id: int
+    terminal_id: int
+    outflow_type: str
+    reason: str
+    destination: Optional[str] = None
+    title: str
+    notes: Optional[str] = None
+    product_id: Optional[int] = None
+    product_name: Optional[str] = None
+    storage_location: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    amount: Optional[Decimal] = None
+    cash_register_id: Optional[int] = None
+    expense_id: Optional[int] = None
+    stock_movement_id: Optional[int] = None
+    created_by: Optional[int] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    is_active: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PDVOutflowSummary(BaseModel):
+    product_count: int
+    cash_count: int
+    product_quantity: Decimal
+    cash_amount: Decimal
 
 
 class PDVServiceSummary(BaseModel):

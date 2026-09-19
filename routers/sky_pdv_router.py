@@ -779,6 +779,54 @@ def list_cash_registers(
     return controller.list_cash_registers(db, terminal.id, start_date, end_date, user_id)
 
 # ===================================================================
+# Outflows (saidas de produto e dinheiro)
+# ===================================================================
+
+@router.get("/outflows", response_model=List[schemas.PDVOutflow])
+def list_outflows(
+    outflow_type: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.list_outflows(db, terminal.id, outflow_type, start_date, end_date, skip, limit)
+
+
+@router.get("/outflows/summary", response_model=schemas.PDVOutflowSummary)
+def get_outflow_summary(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.get_outflow_summary(db, terminal.id, start_date, end_date)
+
+
+@router.post("/outflows", response_model=schemas.PDVOutflow)
+def create_outflow(
+    data: schemas.PDVOutflowCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.create_outflow(db, data, terminal.id, current_user.id)
+
+
+@router.post("/outflows/{outflow_id}/cancel")
+def cancel_outflow(
+    outflow_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.cancel_outflow(db, outflow_id, terminal.id, current_user.id)
+
+# ===================================================================
 # Sales Endpoints
 # ===================================================================
 

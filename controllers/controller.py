@@ -18,9 +18,9 @@ from PIL import Image as PILImage
 from models import (
     User, PDVTerminal, PDVTerminalUser, PDVTerminalRole, PDVSupplier, PDVProduct, PDVInventory,
     PDVStockMovement, PDVCashRegister, PDVSale, PDVSaleItem, PDVAccount, PDVAccountItem,
-    SourceType, MovementType, PaymentMethod, SaleType,
+    SourceType, MovementType, PaymentMethod, SaleType, OutflowType,
     PDVCategory, PDVPaymentMethod, PDVExpenseCategory, PDVExpense, PDVTerminalInvite, PDVTaxRecord,
-    PDVInvoiceCustomer, PDVService, PDVServiceOrder
+    PDVInvoiceCustomer, PDVService, PDVServiceOrder, PDVOutflow
 )
 import schemas
 from reportlab.lib.pagesizes import A4
@@ -1731,13 +1731,26 @@ def update_inventory_settings(
 # Cash Register
 # ===================================================================
 
+def _register_withdrawals(register: PDVCashRegister) -> Decimal:
+    return Decimal(str(getattr(register, "total_withdrawals", 0) or 0))
+
+
 def _calculate_register_expected(register: PDVCashRegister) -> Decimal:
     return (
         Decimal(str(register.opening_amount or 0)) +
         Decimal(str(register.total_cash or 0)) +
         Decimal(str(register.total_skywallet or 0)) +
         Decimal(str(register.total_card or 0)) +
-        Decimal(str(register.total_mpesa or 0))
+        Decimal(str(register.total_mpesa or 0)) -
+        _register_withdrawals(register)
+    )
+
+
+def _available_cash_in_register(register: PDVCashRegister) -> Decimal:
+    return (
+        Decimal(str(register.opening_amount or 0)) +
+        Decimal(str(register.total_cash or 0)) -
+        _register_withdrawals(register)
     )
 
 
@@ -1887,6 +1900,7 @@ def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) ->
         ["Vendas em cartao", _fmt_money(register.total_card)],
         ["Vendas em SkyWallet", _fmt_money(register.total_skywallet)],
         ["Vendas em M-Pesa", _fmt_money(register.total_mpesa)],
+        ["Saidas de dinheiro", _fmt_money(getattr(register, "total_withdrawals", 0) or 0)],
         ["Total de vendas", _fmt_money(register.total_sales)],
         ["Valor esperado", _fmt_money(expected_amount)],
         ["Valor informado no fechamento", _fmt_money(closing_amount)],
@@ -4062,6 +4076,324 @@ def delete_expense(db: Session, expense_id: int, terminal_id: int):
     expense.is_active = False
     db.commit()
     return {"message": "Expense deactivated successfully"}
+
+
+PRODUCT_OUTFLOW_REASONS = {"cozinha", "consumo_interno", "perda", "outro"}
+CASH_OUTFLOW_REASONS = {"compra", "pagamento", "sangria", "outro"}
+REASON_LABELS = {
+    "cozinha": "Cozinha",
+    "consumo_interno": "Consumo interno",
+    "perda": "Perda / avaria",
+    "compra": "Compra",
+    "pagamento": "Pagamento",
+    "sangria": "Sangria",
+    "outro": "Outro",
+}
+
+
+def _outflow_type_value(value) -> str:
+    return value.value if hasattr(value, "value") else str(value)
+
+
+def _hydrate_outflow(outflow: PDVOutflow) -> PDVOutflow:
+    outflow.product_name = outflow.product.name if outflow.product else None
+    user = outflow.created_by_user
+    if user:
+        outflow.created_by_name = user.name or user.username or user.email
+    else:
+        outflow.created_by_name = None
+    outflow.outflow_type = _outflow_type_value(outflow.outflow_type)
+    return outflow
+
+
+def list_outflows(
+    db: Session,
+    terminal_id: int,
+    outflow_type: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    skip: int = 0,
+    limit: int = 100,
+):
+    query = db.query(PDVOutflow).filter(
+        PDVOutflow.terminal_id == terminal_id,
+        PDVOutflow.is_active == True,
+    )
+    if outflow_type:
+        type_value = outflow_type.value if hasattr(outflow_type, "value") else str(outflow_type)
+        if type_value == OutflowType.PRODUCT.value:
+            query = query.filter(PDVOutflow.outflow_type == OutflowType.PRODUCT)
+        elif type_value == OutflowType.CASH.value:
+            query = query.filter(PDVOutflow.outflow_type == OutflowType.CASH)
+    if start_date:
+        query = query.filter(PDVOutflow.created_at >= start_date)
+    if end_date:
+        query = query.filter(PDVOutflow.created_at <= end_date)
+    items = query.order_by(desc(PDVOutflow.created_at)).offset(skip).limit(limit).all()
+    return [_hydrate_outflow(item) for item in items]
+
+
+def get_outflow_summary(
+    db: Session,
+    terminal_id: int,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+):
+    query = db.query(PDVOutflow).filter(
+        PDVOutflow.terminal_id == terminal_id,
+        PDVOutflow.is_active == True,
+    )
+    if start_date:
+        query = query.filter(PDVOutflow.created_at >= start_date)
+    if end_date:
+        query = query.filter(PDVOutflow.created_at <= end_date)
+    items = query.all()
+    product_items = [item for item in items if _outflow_type_value(item.outflow_type) == OutflowType.PRODUCT.value]
+    cash_items = [item for item in items if _outflow_type_value(item.outflow_type) == OutflowType.CASH.value]
+    return {
+        "product_count": len(product_items),
+        "cash_count": len(cash_items),
+        "product_quantity": sum((Decimal(str(item.quantity or 0)) for item in product_items), Decimal("0")),
+        "cash_amount": sum((Decimal(str(item.amount or 0)) for item in cash_items), Decimal("0")),
+    }
+
+
+def create_outflow(db: Session, data: schemas.PDVOutflowCreate, terminal_id: int, user_id: int):
+    outflow_type = _outflow_type_value(data.outflow_type)
+    reason = (data.reason or "").strip().lower()
+    notes = (data.notes or "").strip() or None
+    destination = (data.destination or "").strip() or None
+
+    if outflow_type == OutflowType.PRODUCT.value:
+        if not (
+            check_terminal_permission(db, terminal_id, user_id, "can_manage_stock")
+            or check_terminal_permission(db, terminal_id, user_id, "can_sell")
+        ):
+            raise HTTPException(status_code=403, detail="Sem permissao para registar saida de produto.")
+        if reason not in PRODUCT_OUTFLOW_REASONS:
+            raise HTTPException(status_code=400, detail="Motivo de saida de produto invalido.")
+        if not data.product_id:
+            raise HTTPException(status_code=400, detail="Selecione o produto da saida.")
+        quantity = Decimal(str(data.quantity or 0))
+        if quantity <= 0:
+            raise HTTPException(status_code=400, detail="A quantidade deve ser superior a zero.")
+
+        product = db.query(PDVProduct).filter(
+            PDVProduct.id == data.product_id,
+            PDVProduct.terminal_id == terminal_id,
+        ).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        storage_location = data.storage_location or "balcao"
+        inventory = db.query(PDVInventory).filter(
+            PDVInventory.product_id == product.id,
+            PDVInventory.terminal_id == terminal_id,
+            PDVInventory.storage_location == storage_location,
+        ).first()
+        if not inventory:
+            inventory = PDVInventory(
+                product_id=product.id,
+                terminal_id=terminal_id,
+                storage_location=storage_location,
+                quantity=0,
+            )
+            db.add(inventory)
+            db.flush()
+
+        qty_before = Decimal(str(inventory.quantity or 0))
+        if quantity > qty_before:
+            raise HTTPException(status_code=400, detail="Estoque insuficiente para esta saida.")
+
+        qty_after = qty_before - quantity
+        inventory.quantity = qty_after
+        inventory.updated_at = datetime.utcnow()
+
+        if reason == "cozinha" and not destination:
+            destination = "Cozinha"
+
+        reason_label = REASON_LABELS.get(reason, reason)
+        title = (data.title or "").strip() or (
+            f"Saida de {product.name} para {destination}" if destination else f"Saida de {product.name} ({reason_label})"
+        )
+        movement_notes = f"Local: {storage_location}. Destino: {destination or reason_label}. {notes or ''}".strip()
+        movement = PDVStockMovement(
+            product_id=product.id,
+            terminal_id=terminal_id,
+            movement_type=MovementType.OUT,
+            quantity=-quantity,
+            quantity_before=qty_before,
+            quantity_after=qty_after,
+            notes=movement_notes,
+            reference=f"outflow:{reason}",
+            created_by=user_id,
+        )
+        db.add(movement)
+        db.flush()
+        _notify_stock_critical(db, product, inventory, qty_before, qty_after)
+
+        outflow = PDVOutflow(
+            terminal_id=terminal_id,
+            outflow_type=OutflowType.PRODUCT,
+            reason=reason,
+            destination=destination,
+            title=title,
+            notes=notes,
+            product_id=product.id,
+            storage_location=storage_location,
+            quantity=quantity,
+            amount=None,
+            cash_register_id=None,
+            expense_id=None,
+            stock_movement_id=movement.id,
+            created_by=user_id,
+        )
+        db.add(outflow)
+        db.commit()
+        db.refresh(outflow)
+        return _hydrate_outflow(outflow)
+
+    if outflow_type != OutflowType.CASH.value:
+        raise HTTPException(status_code=400, detail="Tipo de saida invalido.")
+
+    if not (
+        check_terminal_permission(db, terminal_id, user_id, "can_open_cash_register")
+        or check_terminal_permission(db, terminal_id, user_id, "can_sell")
+    ):
+        raise HTTPException(status_code=403, detail="Sem permissao para registar saida de dinheiro.")
+    if reason not in CASH_OUTFLOW_REASONS:
+        raise HTTPException(status_code=400, detail="Motivo de saida de dinheiro invalido.")
+
+    amount = Decimal(str(data.amount or 0))
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="O valor da saida deve ser superior a zero.")
+
+    register = get_current_register(db, terminal_id, user_id=user_id)
+    if not register:
+        raise HTTPException(status_code=400, detail="Cash register is closed. Please open register first.")
+
+    available = _available_cash_in_register(register)
+    if amount > available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dinheiro insuficiente no caixa. Disponivel: {available:.2f}",
+        )
+
+    reason_label = REASON_LABELS.get(reason, reason)
+    title = (data.title or "").strip() or f"Saida de caixa - {reason_label}"
+    if destination is None and reason == "compra":
+        destination = "Loja"
+
+    expense_id = None
+    if reason != "sangria":
+        expense = PDVExpense(
+            terminal_id=terminal_id,
+            created_by=user_id,
+            category_id=None,
+            title=title,
+            description=notes,
+            amount=amount,
+            expense_date=datetime.utcnow(),
+            payment_method="cash",
+            reference=f"caixa:{register.id}",
+            notes=f"Saida do caixa #{register.id}. Motivo: {reason_label}.",
+            is_active=True,
+        )
+        db.add(expense)
+        db.flush()
+        expense_id = expense.id
+
+    register.total_withdrawals = _register_withdrawals(register) + amount
+    register.expected_amount = _calculate_register_expected(register)
+
+    outflow = PDVOutflow(
+        terminal_id=terminal_id,
+        outflow_type=OutflowType.CASH,
+        reason=reason,
+        destination=destination,
+        title=title,
+        notes=notes,
+        product_id=None,
+        storage_location=None,
+        quantity=None,
+        amount=amount,
+        cash_register_id=register.id,
+        expense_id=expense_id,
+        stock_movement_id=None,
+        created_by=user_id,
+    )
+    db.add(outflow)
+    db.commit()
+    db.refresh(outflow)
+    return _hydrate_outflow(outflow)
+
+
+def cancel_outflow(db: Session, outflow_id: int, terminal_id: int, user_id: int):
+    outflow = db.query(PDVOutflow).filter(
+        PDVOutflow.id == outflow_id,
+        PDVOutflow.terminal_id == terminal_id,
+        PDVOutflow.is_active == True,
+    ).first()
+    if not outflow:
+        raise HTTPException(status_code=404, detail="Saida nao encontrada.")
+
+    outflow_type = _outflow_type_value(outflow.outflow_type)
+
+    if outflow_type == OutflowType.PRODUCT.value:
+        if not (
+            check_terminal_permission(db, terminal_id, user_id, "can_manage_stock")
+            or check_terminal_permission(db, terminal_id, user_id, "can_sell")
+        ):
+            raise HTTPException(status_code=403, detail="Sem permissao para anular saida de produto.")
+        if outflow.product_id and outflow.quantity:
+            inventory = db.query(PDVInventory).filter(
+                PDVInventory.product_id == outflow.product_id,
+                PDVInventory.terminal_id == terminal_id,
+                PDVInventory.storage_location == (outflow.storage_location or "balcao"),
+            ).first()
+            if inventory:
+                qty_before = Decimal(str(inventory.quantity or 0))
+                qty_after = qty_before + Decimal(str(outflow.quantity))
+                inventory.quantity = qty_after
+                inventory.updated_at = datetime.utcnow()
+                movement = PDVStockMovement(
+                    product_id=outflow.product_id,
+                    terminal_id=terminal_id,
+                    movement_type=MovementType.RETURN,
+                    quantity=outflow.quantity,
+                    quantity_before=qty_before,
+                    quantity_after=qty_after,
+                    notes=f"Anulacao da saida #{outflow.id}",
+                    reference=f"outflow-cancel:{outflow.id}",
+                    created_by=user_id,
+                )
+                db.add(movement)
+    elif outflow_type == OutflowType.CASH.value:
+        if not (
+            check_terminal_permission(db, terminal_id, user_id, "can_open_cash_register")
+            or check_terminal_permission(db, terminal_id, user_id, "can_sell")
+        ):
+            raise HTTPException(status_code=403, detail="Sem permissao para anular saida de dinheiro.")
+        register = None
+        if outflow.cash_register_id:
+            register = db.query(PDVCashRegister).filter(PDVCashRegister.id == outflow.cash_register_id).first()
+        if not register or register.status != "open":
+            raise HTTPException(status_code=400, detail="So e possivel anular saida de dinheiro com o caixa ainda aberto.")
+        register.total_withdrawals = max(
+            Decimal("0.00"),
+            _register_withdrawals(register) - Decimal(str(outflow.amount or 0)),
+        )
+        register.expected_amount = _calculate_register_expected(register)
+        if outflow.expense_id:
+            expense = db.query(PDVExpense).filter(PDVExpense.id == outflow.expense_id).first()
+            if expense:
+                expense.is_active = False
+    else:
+        raise HTTPException(status_code=400, detail="Tipo de saida invalido.")
+
+    outflow.is_active = False
+    db.commit()
+    return {"message": "Saida anulada com sucesso."}
 
 
 def get_financial_summary(
