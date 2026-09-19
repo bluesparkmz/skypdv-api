@@ -4079,15 +4079,13 @@ def delete_expense(db: Session, expense_id: int, terminal_id: int):
 
 
 PRODUCT_OUTFLOW_REASONS = {"cozinha", "cafetaria", "consumo_interno", "perda", "outro"}
-CASH_OUTFLOW_REASONS = {"compra", "pagamento", "sangria", "outro"}
+CASH_OUTFLOW_REASONS = {"despesa_diaria", "outro"}
 REASON_LABELS = {
     "cozinha": "Cozinha",
     "cafetaria": "Cafetaria",
     "consumo_interno": "Consumo interno",
     "perda": "Perda / avaria",
-    "compra": "Compra",
-    "pagamento": "Pagamento",
-    "sangria": "Sangria",
+    "despesa_diaria": "Despesa diária",
     "outro": "Outro",
 }
 
@@ -4284,11 +4282,8 @@ def create_outflow(db: Session, data: schemas.PDVOutflowCreate, terminal_id: int
 
     reason_label = REASON_LABELS.get(reason, reason)
     title = (data.title or "").strip() or f"Saida de caixa - {reason_label}"
-    if destination is None and reason == "compra":
-        destination = "Loja"
-
     expense_id = None
-    if reason != "sangria":
+    if reason in ("despesa_diaria", "outro"):
         expense = PDVExpense(
             terminal_id=terminal_id,
             created_by=user_id,
