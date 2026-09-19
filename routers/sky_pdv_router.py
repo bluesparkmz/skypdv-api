@@ -2772,3 +2772,368 @@ def get_service_order(
     """Obter detalhes de um serviço prestado específico."""
     terminal = controller.get_terminal_required(db, current_user.id)
     return controller.get_service_order(db, terminal.id, order_id)
+
+
+# ---------------------------------------------------------------------------
+# PDF export — Service Orders
+# ---------------------------------------------------------------------------
+
+@router.get("/service-orders/pdf/export")
+def export_service_orders_pdf(
+    period: Optional[str] = Query(None, description="today | week | month | all"),
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Exporta serviços prestados filtrados como PDF profissional (ReportLab).
+    Parâmetro `period` aceita: today, week, month, all.
+    Em alternativa, pode fornecer start_date/end_date directamente.
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.colors import HexColor
+
+    terminal = controller.get_terminal_required(db, current_user.id)
+    now = datetime.utcnow()
+
+    # ── Determinar intervalo de datas ──────────────────────────────────────
+    period_label_str = "Todos os Registos"
+
+    if period == "today":
+        start_date = datetime(now.year, now.month, now.day, 0, 0, 0)
+        end_date = datetime(now.year, now.month, now.day, 23, 59, 59)
+        period_label_str = f"Hoje — {now.strftime('%d/%m/%Y')}"
+
+    elif period == "week":
+        weekday = now.weekday()  # 0=Mon
+        start_date = datetime(now.year, now.month, now.day) - timedelta(days=weekday)
+        end_date = start_date + timedelta(days=6, hours=23, minutes=59, seconds=59)
+        period_label_str = f"Esta Semana ({start_date.strftime('%d/%m')} – {end_date.strftime('%d/%m/%Y')})"
+
+    elif period == "month":
+        start_date = datetime(now.year, now.month, 1)
+        import calendar
+        last_day = calendar.monthrange(now.year, now.month)[1]
+        end_date = datetime(now.year, now.month, last_day, 23, 59, 59)
+        period_label_str = f"Este Mês — {now.strftime('%B %Y')}"
+
+    else:
+        # all or custom range
+        if start_date and end_date:
+            period_label_str = f"{start_date.strftime('%d/%m/%Y')} até {end_date.strftime('%d/%m/%Y')}"
+
+    # ── Buscar ordens ───────────────────────────────────────────────────────
+    from models import PDVServiceOrder
+    from sqlalchemy import desc as sa_desc
+
+    query = (
+        db.query(PDVServiceOrder)
+        .filter(PDVServiceOrder.terminal_id == terminal.id)
+        .order_by(sa_desc(PDVServiceOrder.created_at))
+    )
+    if start_date:
+        query = query.filter(PDVServiceOrder.created_at >= start_date)
+    if end_date:
+        query = query.filter(PDVServiceOrder.created_at <= end_date)
+
+    orders = query.all()
+
+    # ── Calcular totais ─────────────────────────────────────────────────────
+    total_revenue = sum(float(o.total) for o in orders)
+    total_count = len(orders)
+    avg_value = total_revenue / total_count if total_count > 0 else 0.0
+
+    currency = terminal.currency or "MT"
+
+    def fmt_money(v) -> str:
+        try:
+            return f"{float(v):,.2f} {currency}"
+        except Exception:
+            return f"0.00 {currency}"
+
+    def fmt_qty(v) -> str:
+        try:
+            f = float(v)
+            return str(int(f)) if f == int(f) else f"{f:.2f}"
+        except Exception:
+            return str(v)
+
+    def fmt_dt(dt) -> str:
+        if not dt:
+            return ""
+        return dt.strftime("%d/%m/%Y %H:%M")
+
+    # ── Mapeamento de método de pagamento ───────────────────────────────────
+    PAY_LABELS = {
+        "cash": "Dinheiro",
+        "card": "Cartão",
+        "mpesa": "M-Pesa",
+        "skywallet": "SkyWallet",
+        "emola": "e-Mola",
+        "mixed": "Misto",
+        "ponto24": "Ponto 24",
+        "multicaixa": "Multicaixa",
+    }
+
+    def pay_label(method: str) -> str:
+        return PAY_LABELS.get(str(method).lower(), str(method))
+
+    # ── Cores da marca ─────────────────────────────────────────────────────
+    PRIMARY = HexColor("#4F46E5")      # indigo-600
+    PRIMARY_LIGHT = HexColor("#EEF2FF")
+    EMERALD = HexColor("#059669")
+    GRAY_DARK = HexColor("#111827")
+    GRAY_MID = HexColor("#6B7280")
+    GRAY_LIGHT = HexColor("#F9FAFB")
+    BORDER = HexColor("#E5E7EB")
+    WHITE = colors.white
+
+    # ── Estilos de texto ───────────────────────────────────────────────────
+    styles = getSampleStyleSheet()
+    style_title = ParagraphStyle(
+        "SkyTitle",
+        parent=styles["Normal"],
+        fontSize=20,
+        fontName="Helvetica-Bold",
+        textColor=GRAY_DARK,
+        spaceAfter=2,
+    )
+    style_subtitle = ParagraphStyle(
+        "SkySub",
+        parent=styles["Normal"],
+        fontSize=9,
+        fontName="Helvetica",
+        textColor=GRAY_MID,
+        spaceAfter=0,
+    )
+    style_section = ParagraphStyle(
+        "SkySection",
+        parent=styles["Normal"],
+        fontSize=11,
+        fontName="Helvetica-Bold",
+        textColor=GRAY_DARK,
+        spaceBefore=14,
+        spaceAfter=4,
+    )
+    style_normal = ParagraphStyle(
+        "SkyNormal",
+        parent=styles["Normal"],
+        fontSize=8,
+        fontName="Helvetica",
+        textColor=GRAY_DARK,
+    )
+    style_small = ParagraphStyle(
+        "SkySmall",
+        parent=styles["Normal"],
+        fontSize=7,
+        fontName="Helvetica",
+        textColor=GRAY_MID,
+    )
+    style_bold = ParagraphStyle(
+        "SkyBold",
+        parent=styles["Normal"],
+        fontSize=8,
+        fontName="Helvetica-Bold",
+        textColor=GRAY_DARK,
+    )
+    style_money = ParagraphStyle(
+        "SkyMoney",
+        parent=styles["Normal"],
+        fontSize=8,
+        fontName="Helvetica-Bold",
+        textColor=EMERALD,
+        alignment=TA_RIGHT,
+    )
+    style_header_cell = ParagraphStyle(
+        "SkyHeaderCell",
+        parent=styles["Normal"],
+        fontSize=8,
+        fontName="Helvetica-Bold",
+        textColor=WHITE,
+    )
+
+    # ── Construir PDF ──────────────────────────────────────────────────────
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=28,
+        rightMargin=28,
+        topMargin=28,
+        bottomMargin=28,
+    )
+    story = []
+    page_w = A4[0] - 56  # usable width
+
+    # --- Cabeçalho ---
+    story.append(Paragraph(terminal.name or "SkyPDV", style_title))
+    if terminal.address:
+        story.append(Paragraph(terminal.address, style_subtitle))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph("Relatório de Serviços Prestados", style_subtitle))
+    story.append(Paragraph(f"Período: {period_label_str}", style_subtitle))
+    story.append(Paragraph(f"Emitido em: {fmt_dt(now)}", style_subtitle))
+    story.append(Spacer(1, 10))
+
+    # --- Linha divisória ---
+    story.append(Table(
+        [[""]],
+        colWidths=[page_w],
+        style=TableStyle([
+            ("LINEABOVE", (0, 0), (-1, 0), 1.5, PRIMARY),
+        ]),
+    ))
+    story.append(Spacer(1, 8))
+
+    # --- Cartões de resumo (3 colunas) ---
+    col_w = page_w / 3 - 4
+
+    def summary_card(label: str, value: str, color=GRAY_DARK):
+        return Table(
+            [
+                [Paragraph(label, style_small)],
+                [Paragraph(value, ParagraphStyle("v", parent=style_bold, fontSize=13, textColor=color))],
+            ],
+            colWidths=[col_w],
+            style=TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), GRAY_LIGHT),
+                ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
+                ("ROUNDEDCORNERS", [4, 4, 4, 4]),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ]),
+        )
+
+    cards_table = Table(
+        [[
+            summary_card("Receita Total", fmt_money(total_revenue), EMERALD),
+            Spacer(4, 1),
+            summary_card("Prestações", str(total_count), PRIMARY),
+            Spacer(4, 1),
+            summary_card("Preço Médio", fmt_money(avg_value), GRAY_DARK),
+        ]],
+        colWidths=[col_w, 4, col_w, 4, col_w],
+        style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]),
+    )
+    story.append(cards_table)
+    story.append(Spacer(1, 14))
+
+    # --- Tabela de prestações ---
+    story.append(Paragraph(f"Detalhes das Prestações ({total_count} registos)", style_section))
+
+    if not orders:
+        story.append(Paragraph("Nenhuma prestação encontrada para este período.", style_normal))
+    else:
+        col_widths = [
+            page_w * 0.08,   # Recibo
+            page_w * 0.12,   # Data
+            page_w * 0.22,   # Serviço
+            page_w * 0.05,   # Qtd
+            page_w * 0.18,   # Cliente
+            page_w * 0.11,   # Pagamento
+            page_w * 0.14,   # Total
+        ]
+
+        header_row = [
+            Paragraph("Recibo", style_header_cell),
+            Paragraph("Data / Hora", style_header_cell),
+            Paragraph("Serviço", style_header_cell),
+            Paragraph("Qtd", style_header_cell),
+            Paragraph("Cliente", style_header_cell),
+            Paragraph("Pagamento", style_header_cell),
+            Paragraph("Total", ParagraphStyle("RH", parent=style_header_cell, alignment=TA_RIGHT)),
+        ]
+
+        data_rows = [header_row]
+        for i, o in enumerate(orders):
+            bg = WHITE if i % 2 == 0 else GRAY_LIGHT
+            service_text = o.service_name or ""
+            if o.notes:
+                service_text += f"\n{o.notes}"
+            customer_text = o.customer_name or "Balcão"
+            if o.customer_phone:
+                customer_text += f"\n{o.customer_phone}"
+
+            data_rows.append([
+                Paragraph(o.receipt_number or f"#{o.id}", style_small),
+                Paragraph(fmt_dt(o.created_at), style_small),
+                Paragraph(service_text, style_normal),
+                Paragraph(fmt_qty(o.quantity), style_normal),
+                Paragraph(customer_text, style_small),
+                Paragraph(pay_label(o.payment_method or ""), style_small),
+                Paragraph(fmt_money(o.total), style_money),
+            ])
+
+        # Total row
+        data_rows.append([
+            Paragraph("", style_bold),
+            Paragraph("", style_bold),
+            Paragraph("", style_bold),
+            Paragraph("", style_bold),
+            Paragraph("", style_bold),
+            Paragraph("TOTAL", ParagraphStyle("TL", parent=style_bold, alignment=TA_RIGHT)),
+            Paragraph(fmt_money(total_revenue), ParagraphStyle("TR", parent=style_money, fontSize=9)),
+        ])
+
+        n_data = len(data_rows)
+        table_style = TableStyle([
+            # Header
+            ("BACKGROUND", (0, 0), (-1, 0), PRIMARY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 8),
+            ("TOPPADDING", (0, 0), (-1, 0), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
+            # Body alternating
+            ("FONTSIZE", (0, 1), (-1, -2), 7),
+            ("TOPPADDING", (0, 1), (-1, -2), 5),
+            ("BOTTOMPADDING", (0, 1), (-1, -2), 5),
+            # Total row
+            ("BACKGROUND", (0, n_data - 1), (-1, n_data - 1), PRIMARY_LIGHT),
+            ("FONTNAME", (0, n_data - 1), (-1, n_data - 1), "Helvetica-Bold"),
+            ("TOPPADDING", (0, n_data - 1), (-1, n_data - 1), 7),
+            ("BOTTOMPADDING", (0, n_data - 1), (-1, n_data - 1), 7),
+            ("LINEABOVE", (0, n_data - 1), (-1, n_data - 1), 1, PRIMARY),
+            # Grid
+            ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
+            ("ROWBACKGROUNDS", (0, 1), (-1, n_data - 2), [WHITE, GRAY_LIGHT]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ])
+
+        t = Table(data_rows, colWidths=col_widths, repeatRows=1, style=table_style)
+        story.append(t)
+
+    # --- Rodapé ---
+    story.append(Spacer(1, 16))
+    story.append(Table(
+        [[""]],
+        colWidths=[page_w],
+        style=TableStyle([("LINEABOVE", (0, 0), (-1, 0), 0.5, BORDER)]),
+    ))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(
+        f"SkyPDV · Gerado em {fmt_dt(now)} · {terminal.name or ''}",
+        ParagraphStyle("footer", parent=style_small, alignment=TA_CENTER),
+    ))
+
+    doc.build(story)
+    buffer.seek(0)
+
+    safe_period = (period or "todos").replace(" ", "_")
+    filename = f"servicos_{safe_period}_{now.strftime('%Y%m%d_%H%M')}.pdf"
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
