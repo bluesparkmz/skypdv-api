@@ -2993,36 +2993,34 @@ def export_service_orders_pdf(
     story.append(Spacer(1, 8))
 
     # --- Cartões de resumo (3 colunas) ---
-    col_w = page_w / 3 - 4
-
-    def summary_card(label: str, value: str, color=GRAY_DARK):
-        return Table(
-            [
-                [Paragraph(label, style_small)],
-                [Paragraph(value, ParagraphStyle("v", parent=style_bold, fontSize=13, textColor=color))],
-            ],
-            colWidths=[col_w],
-            style=TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), GRAY_LIGHT),
-                ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
-                ("ROUNDEDCORNERS", [4, 4, 4, 4]),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ]),
-        )
+    col_w = page_w / 3.0
 
     cards_table = Table(
-        [[
-            summary_card("Receita Total", fmt_money(total_revenue), EMERALD),
-            Spacer(4, 1),
-            summary_card("Prestações", str(total_count), PRIMARY),
-            Spacer(4, 1),
-            summary_card("Preço Médio", fmt_money(avg_value), GRAY_DARK),
-        ]],
-        colWidths=[col_w, 4, col_w, 4, col_w],
-        style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]),
+        [
+            [
+                Paragraph("Receita Total", style_small),
+                Paragraph("Prestações", style_small),
+                Paragraph("Preço Médio", style_small),
+            ],
+            [
+                Paragraph(fmt_money(total_revenue), ParagraphStyle("rev", parent=style_bold, fontSize=12, textColor=EMERALD)),
+                Paragraph(str(total_count), ParagraphStyle("cnt", parent=style_bold, fontSize=12, textColor=PRIMARY)),
+                Paragraph(fmt_money(avg_value), ParagraphStyle("avg", parent=style_bold, fontSize=12, textColor=GRAY_DARK)),
+            ],
+        ],
+        colWidths=[col_w, col_w, col_w],
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), GRAY_LIGHT),
+            ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDER),
+            ("TOPPADDING", (0, 0), (-1, 0), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+            ("TOPPADDING", (0, 1), (-1, 1), 2),
+            ("BOTTOMPADDING", (0, 1), (-1, 1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]),
     )
     story.append(cards_table)
     story.append(Spacer(1, 14))
@@ -3034,13 +3032,13 @@ def export_service_orders_pdf(
         story.append(Paragraph("Nenhuma prestação encontrada para este período.", style_normal))
     else:
         col_widths = [
-            page_w * 0.08,   # Recibo
-            page_w * 0.12,   # Data
-            page_w * 0.22,   # Serviço
-            page_w * 0.05,   # Qtd
+            page_w * 0.10,   # Recibo
+            page_w * 0.14,   # Data
+            page_w * 0.26,   # Serviço
+            page_w * 0.06,   # Qtd
             page_w * 0.18,   # Cliente
             page_w * 0.11,   # Pagamento
-            page_w * 0.14,   # Total
+            page_w * 0.15,   # Total
         ]
 
         header_row = [
@@ -3055,16 +3053,15 @@ def export_service_orders_pdf(
 
         data_rows = [header_row]
         for i, o in enumerate(orders):
-            bg = WHITE if i % 2 == 0 else GRAY_LIGHT
-            service_text = o.service_name or ""
+            service_text = str(o.service_name or "")
             if o.notes:
-                service_text += f"\n{o.notes}"
-            customer_text = o.customer_name or "Balcão"
+                service_text += f"<br/>{o.notes}"
+            customer_text = str(o.customer_name or "Balcão")
             if o.customer_phone:
-                customer_text += f"\n{o.customer_phone}"
+                customer_text += f"<br/>{o.customer_phone}"
 
             data_rows.append([
-                Paragraph(o.receipt_number or f"#{o.id}", style_small),
+                Paragraph(str(o.receipt_number or f"#{o.id}"), style_small),
                 Paragraph(fmt_dt(o.created_at), style_small),
                 Paragraph(service_text, style_normal),
                 Paragraph(fmt_qty(o.quantity), style_normal),
@@ -3133,8 +3130,12 @@ def export_service_orders_pdf(
     safe_period = (period or "todos").replace(" ", "_")
     filename = f"servicos_{safe_period}_{now.strftime('%Y%m%d_%H%M')}.pdf"
 
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Access-Control-Expose-Headers": "Content-Disposition",
+    }
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=headers,
     )
