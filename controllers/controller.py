@@ -2023,10 +2023,10 @@ def get_current_register(db: Session, terminal_id: int, user_id: Optional[int] =
     return register
 
 def open_register(db: Session, data: schemas.PDVCashRegisterOpen, terminal_id: int, user_id: int):
-    # Verificar se o usuÃ¡rio jÃ¡ tem caixa aberto (nÃ£o bloqueia outros usuÃ¡rios)
+    # Verificar se o usuário já tem caixa aberto (não bloqueia outros usuários)
     existing = get_current_register(db, terminal_id, user_id=user_id)
     if existing:
-        raise HTTPException(status_code=400, detail="You already have an open cash register")
+        raise HTTPException(status_code=400, detail="Já possui um caixa aberto para o seu utilizador.")
         
     register = PDVCashRegister(
         terminal_id=terminal_id,
@@ -2046,19 +2046,18 @@ def close_register(db: Session, data: schemas.PDVCashRegisterClose, terminal_id:
     if not register and is_terminal_admin(db, terminal_id, user_id):
         register = get_current_register(db, terminal_id)
     if not register:
-        raise HTTPException(status_code=404, detail="No open cash register found")
+        raise HTTPException(status_code=404, detail="Nenhum caixa aberto foi encontrado.")
         
     if register.user_id != user_id:
-        # Idealmente apenas o dono ou o prÃ³prio operador fecha, mas simplificando
-        raise HTTPException(status_code=403, detail="Only the operator who opened the cash register can close it")
+        raise HTTPException(status_code=403, detail="Apenas o operador que abriu o caixa tem permissão para fechá-lo.")
         
     # Calcular esperados
     expected = (
         register.opening_amount + 
         register.total_cash + 
-        register.total_skywallet +  # SkyWallet conta como valor monetÃ¡rio real
-        register.total_card +       # CartÃ£o tambÃ©m
-        register.total_mpesa        # Mpesa tambÃ©m
+        register.total_skywallet +  # SkyWallet conta como valor monetário real
+        register.total_card +       # Cartão também
+        register.total_mpesa        # Mpesa também
     )
     
     register.closing_amount = data.closing_amount
@@ -2092,10 +2091,10 @@ def list_cash_registers(
 def close_register(db: Session, data: schemas.PDVCashRegisterClose, terminal_id: int, user_id: int):
     register = get_current_register(db, terminal_id, user_id=user_id)
     if not register:
-        raise HTTPException(status_code=404, detail="No open cash register found")
+        raise HTTPException(status_code=404, detail="Nenhum caixa aberto foi encontrado.")
 
     if register.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Only the operator who opened the cash register can close it")
+        raise HTTPException(status_code=403, detail="Apenas o operador que abriu o caixa tem permissão para fechá-lo.")
 
     return _finalize_register_close(db, register, data.closing_amount, data.notes, auto_closed=False)
 
@@ -2123,18 +2122,18 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
     # 1. Verificar caixa e terminal
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
-        raise HTTPException(status_code=404, detail="Terminal not found")
+        raise HTTPException(status_code=404, detail="Terminal não encontrado.")
     # Verificar bloqueio de venda apenas se SKYPDV_ACTIVATE_CHARGING=true
     import os
     enforce_charging = os.getenv("SKYPDV_ACTIVATE_CHARGING", "false").strip().lower() in ("1", "true", "yes")
     if enforce_charging and terminal.subscription_status == "suspended":
-        raise HTTPException(status_code=403, detail="Terminal suspended due to unpaid subscription. Please make a payment to reactivate.")
+        raise HTTPException(status_code=403, detail="Terminal suspenso por falta de pagamento da assinatura. Regularize para desbloquear.")
 
     register = get_current_register(db, terminal_id, user_id=user_id)
     if not register:
-        raise HTTPException(status_code=400, detail="Cash register is closed. Please open register first.")
+        raise HTTPException(status_code=400, detail="O caixa está fechado. Por favor, abra o caixa primeiro.")
     if register.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Use your own open cash register to register sales.")
+        raise HTTPException(status_code=403, detail="Utilize o seu próprio caixa aberto para registar operações.")
         
     # 2. Processar Itens
     items_to_add = []
@@ -5602,29 +5601,29 @@ def create_service_order(
 ):
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     if not terminal:
-        raise HTTPException(status_code=404, detail="Terminal not found")
+        raise HTTPException(status_code=404, detail="Terminal não encontrado.")
 
     import os
     enforce_charging = os.getenv("SKYPDV_ACTIVATE_CHARGING", "false").strip().lower() in ("1", "true", "yes")
     if enforce_charging and terminal.subscription_status == "suspended":
-        raise HTTPException(status_code=403, detail="Terminal suspended due to unpaid subscription.")
+        raise HTTPException(status_code=403, detail="Terminal suspenso por falta de pagamento da assinatura.")
 
     service = db.query(PDVService).filter(
         PDVService.id == data.service_id,
         PDVService.terminal_id == terminal_id
     ).first()
     if not service:
-        raise HTTPException(status_code=404, detail="Service not found")
+        raise HTTPException(status_code=404, detail="Serviço não encontrado.")
     if not service.is_active:
-        raise HTTPException(status_code=400, detail="Service is inactive")
+        raise HTTPException(status_code=400, detail="O serviço selecionado está inactivo.")
 
     register = get_current_register(db, terminal_id, user_id=user_id)
     if not register:
-        raise HTTPException(status_code=400, detail="Cash register is closed. Please open register first.")
+        raise HTTPException(status_code=400, detail="O caixa está fechado. Por favor, abra o caixa primeiro.")
 
     quantity = Decimal(str(data.quantity or 1))
     if quantity <= Decimal("0"):
-        raise HTTPException(status_code=400, detail="Quantity must be greater than zero")
+        raise HTTPException(status_code=400, detail="A quantidade deve ser maior que zero.")
 
     service_price = Decimal(str(service.price))
     subtotal = service_price * quantity
@@ -5637,7 +5636,7 @@ def create_service_order(
     payment_method = (data.payment_method or "cash").strip().lower()
 
     if payment_method == "cash" and effective_amount_paid < total:
-        raise HTTPException(status_code=400, detail="Amount paid cannot be lower than total for cash payments")
+        raise HTTPException(status_code=400, detail="O valor pago não pode ser inferior ao total.")
 
     change_amount = max(Decimal("0.00"), effective_amount_paid - total)
     receipt_number = f"SRV-{terminal_id}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
