@@ -6109,3 +6109,277 @@ def get_service_summary(
         "skywallet_revenue": skywallet_revenue,
         "mixed_revenue": mixed_revenue
     }
+
+
+# ===================================================================
+# Outflows (Saídas) — produto retirado para uso ou dinheiro retirado
+# ===================================================================
+
+def create_outflow(db: Session, data: schemas.PDVOutflowCreate, user_id: int) -> PDVOutflow:
+    """Regista uma saída de produto ou de dinheiro do caixa."""
+    terminal = get_terminal_required(db, user_id)
+
+    # Gerar título automático se não fornecido
+    title = (data.title or "").strip()
+    if not title:
+        if data.outflow_type.value == "product":
+            title = f"Saída de produto — {data.reason}"
+        else:
+            title = f"Saída de caixa — {data.reason}"
+
+    stock_movement_id = None
+    expense_id = None
+    cash_register_id = None
+
+    if data.outflow_type.value == "product":
+        # ── Saída de Produto ──────────────────────────────────────────
+        if not data.product_id:
+            raise HTTPException(status_code=400, detail="product_id é obrigatório para saída de produto")
+        if not data.quantity or data.quantity <= 0:
+            raise HTTPException(status_code=400, detail="Quantidade deve ser positiva para saída de produto")
+
+        product = db.query(PDVProduct).filter(
+            PDVProduct.id == data.product_id,
+            PDVProduct.terminal_id == terminal.id,
+            PDVProduct.is_active == True
+        ).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+        location = (data.storage_location or "balcao").strip()
+
+        if product.track_stock:
+            inventory = db.query(PDVInventory).filter(
+                PDVInventory.product_id == product.id,
+                PDVInventory.terminal_id == terminal.id,
+            ).first()
+
+            qty_before = inventory.quantity if inventory else Decimal("0.00")
+            if qty_before < data.quantity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Estoque insuficiente para esta saida. Disponível: {qty_before}"
+                )
+
+            qty_after = qty_before - data.quantity
+
+            if inventory:
+                inventory.quantity = qty_after
+                db.add(inventory)
+            else:
+                inventory = PDVInventory(
+                    product_id=product.id,
+                    terminal_id=terminal.id,
+                    quantity=qty_after,
+                    min_quantity=Decimal("0.00"),
+                    reserved_quantity=Decimal("0.00"),
+                    storage_location=location,
+                )
+                db.add(inventory)
+
+            movement = PDVStockMovement(
+                product_id=product.id,
+                terminal_id=terminal.id,
+                movement_type=MovementType.OUT,
+                quantity=data.quantity,
+                quantity_before=qty_before,
+                quantity_after=qty_after,
+                reference="outflow",
+                notes=data.notes or f"Saída: {data.reason}",
+                created_by=user_id,
+                created_at=datetime.utcnow(),
+            )
+            db.add(movement)
+            db.flush()
+            stock_movement_id = movement.id
+
+    else:
+        # ── Saída de Dinheiro (Sangria) ───────────────────────────────
+        if not data.amount or data.amount <= 0:
+            raise HTTPException(status_code=400, detail="Valor deve ser positivo para saída de dinheiro")
+
+        # Verificar se há caixa aberto
+        register = db.query(PDVCashRegister).filter(
+            PDVCashRegister.terminal_id == terminal.id,
+            PDVCashRegister.status == "open",
+        ).order_by(PDVCashRegister.opened_at.desc()).first()
+
+        if not register:
+            raise HTTPException(status_code=400, detail="Nenhum caixa aberto. Abra o caixa antes de registar uma saída de dinheiro.")
+
+        cash_register_id = register.id
+
+        # Actualizar total de levantamentos no caixa
+        current_withdrawals = register.total_withdrawals or Decimal("0.00")
+        register.total_withdrawals = current_withdrawals + data.amount
+        db.add(register)
+
+    # Persistir o outflow
+    outflow = PDVOutflow(
+        terminal_id=terminal.id,
+        outflow_type=data.outflow_type,
+        reason=data.reason,
+        destination=data.destination,
+        title=title,
+        notes=data.notes,
+        product_id=data.product_id if data.outflow_type.value == "product" else None,
+        storage_location=data.storage_location if data.outflow_type.value == "product" else None,
+        quantity=data.quantity if data.outflow_type.value == "product" else None,
+        amount=data.amount if data.outflow_type.value == "cash" else None,
+        cash_register_id=cash_register_id,
+        expense_id=expense_id,
+        stock_movement_id=stock_movement_id,
+        created_by=user_id,
+        is_active=True,
+    )
+    db.add(outflow)
+    db.commit()
+    db.refresh(outflow)
+
+    return _enrich_outflow(db, outflow)
+
+
+def get_outflows(
+    db: Session,
+    user_id: int,
+    outflow_type: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> list:
+    terminal = get_terminal_required(db, user_id)
+
+    query = db.query(PDVOutflow).filter(
+        PDVOutflow.terminal_id == terminal.id,
+        PDVOutflow.is_active == True,
+    )
+
+    if outflow_type:
+        query = query.filter(PDVOutflow.outflow_type == outflow_type)
+    if start_date:
+        query = query.filter(PDVOutflow.created_at >= start_date)
+    if end_date:
+        query = query.filter(PDVOutflow.created_at <= end_date)
+
+    outflows = query.order_by(PDVOutflow.created_at.desc()).offset(skip).limit(limit).all()
+    return [_enrich_outflow(db, o) for o in outflows]
+
+
+def get_outflows_summary(
+    db: Session,
+    user_id: int,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> dict:
+    terminal = get_terminal_required(db, user_id)
+
+    query = db.query(PDVOutflow).filter(
+        PDVOutflow.terminal_id == terminal.id,
+        PDVOutflow.is_active == True,
+    )
+    if start_date:
+        query = query.filter(PDVOutflow.created_at >= start_date)
+    if end_date:
+        query = query.filter(PDVOutflow.created_at <= end_date)
+
+    outflows = query.all()
+
+    product_outflows = [o for o in outflows if str(getattr(o.outflow_type, "value", o.outflow_type)) == "product"]
+    cash_outflows = [o for o in outflows if str(getattr(o.outflow_type, "value", o.outflow_type)) == "cash"]
+
+    product_quantity = sum((o.quantity for o in product_outflows if o.quantity), Decimal("0.00"))
+    cash_amount = sum((o.amount for o in cash_outflows if o.amount), Decimal("0.00"))
+
+    return {
+        "product_count": len(product_outflows),
+        "cash_count": len(cash_outflows),
+        "product_quantity": product_quantity,
+        "cash_amount": cash_amount,
+    }
+
+
+def cancel_outflow(db: Session, outflow_id: int, user_id: int) -> dict:
+    """Cancela uma saída e reverte o stock se foi produto."""
+    terminal = get_terminal_required(db, user_id)
+
+    outflow = db.query(PDVOutflow).filter(
+        PDVOutflow.id == outflow_id,
+        PDVOutflow.terminal_id == terminal.id,
+    ).first()
+
+    if not outflow:
+        raise HTTPException(status_code=404, detail="Saída não encontrada")
+    if not outflow.is_active:
+        raise HTTPException(status_code=400, detail="Esta saída já foi cancelada")
+
+    outflow_type_val = str(getattr(outflow.outflow_type, "value", outflow.outflow_type))
+
+    if outflow_type_val == "product" and outflow.stock_movement_id and outflow.product_id and outflow.quantity:
+        # Reverter o stock
+        product = db.query(PDVProduct).filter(
+            PDVProduct.id == outflow.product_id,
+            PDVProduct.terminal_id == terminal.id,
+        ).first()
+
+        if product and product.track_stock:
+            inventory = db.query(PDVInventory).filter(
+                PDVInventory.product_id == product.id,
+                PDVInventory.terminal_id == terminal.id,
+            ).first()
+
+            if inventory:
+                qty_before = inventory.quantity
+                qty_after = qty_before + outflow.quantity
+                inventory.quantity = qty_after
+                db.add(inventory)
+
+                # Registar movimento de reversão
+                reversal = PDVStockMovement(
+                    product_id=product.id,
+                    terminal_id=terminal.id,
+                    movement_type=MovementType.IN,
+                    quantity=outflow.quantity,
+                    quantity_before=qty_before,
+                    quantity_after=qty_after,
+                    reference="outflow_cancel",
+                    notes=f"Cancelamento de saída #{outflow_id}",
+                    created_by=user_id,
+                    created_at=datetime.utcnow(),
+                )
+                db.add(reversal)
+
+    elif outflow_type_val == "cash" and outflow.cash_register_id and outflow.amount:
+        # Reverter o levantamento no caixa
+        register = db.query(PDVCashRegister).filter(
+            PDVCashRegister.id == outflow.cash_register_id,
+        ).first()
+        if register and register.status == "open":
+            current = register.total_withdrawals or Decimal("0.00")
+            register.total_withdrawals = max(Decimal("0.00"), current - outflow.amount)
+            db.add(register)
+
+    outflow.is_active = False
+    db.add(outflow)
+    db.commit()
+
+    return {"message": "Saída cancelada com sucesso", "id": outflow_id}
+
+
+def _enrich_outflow(db: Session, outflow: PDVOutflow) -> PDVOutflow:
+    """Anexa campos virtuais (product_name, created_by_name) ao outflow para serialização."""
+    # product_name
+    if outflow.product_id and not getattr(outflow, "_product_name_set", False):
+        product = db.query(PDVProduct).filter(PDVProduct.id == outflow.product_id).first()
+        outflow.__dict__["product_name"] = product.name if product else None
+    else:
+        outflow.__dict__.setdefault("product_name", None)
+
+    # created_by_name
+    if outflow.created_by and not getattr(outflow, "_creator_name_set", False):
+        creator = db.query(User).filter(User.id == outflow.created_by).first()
+        outflow.__dict__["created_by_name"] = (creator.name or creator.username) if creator else None
+    else:
+        outflow.__dict__.setdefault("created_by_name", None)
+
+    return outflow
