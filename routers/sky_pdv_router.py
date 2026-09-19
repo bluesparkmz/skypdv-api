@@ -1431,71 +1431,68 @@ def get_sales_report_pdf(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """Relatório completo: Vendas de Produtos + Serviços Prestados + Saídas."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, HRFlowable, PageBreak
+    from models import PDVServiceOrder, PDVOutflow as PDVOutflowModel, User as UserModel
+
     terminal = controller.get_terminal_required(db, current_user.id)
- 
-    # Se não informar datas, assume mês atual
+
+    # ── Date defaults ─────────────────────────────────────────
     if not start_date:
         start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     else:
         if start_date.hour == 0 and start_date.minute == 0 and start_date.second == 0:
             start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-
     if not end_date:
         end_date = datetime.utcnow()
     else:
         if end_date.hour == 0 and end_date.minute == 0 and end_date.second == 0:
             end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
- 
+
     if controller.is_terminal_admin(db, terminal.id, current_user.id):
         filter_user_id = user_id
     else:
         filter_user_id = current_user.id
-    summary = controller.get_sales_summary(db, terminal.id, start_date, end_date, filter_user_id)
- 
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+
     currency = terminal.currency or "MT"
- 
-    def _fmt_dt(dt: Optional[datetime]) -> str:
-        if not dt:
-            return ""
-        return dt.strftime("%d/%m/%Y %H:%M")
- 
-    def _fmt_date(dt: Optional[datetime]) -> str:
-        if not dt:
-            return ""
-        return dt.strftime("%d/%m/%Y")
+    issued_at = datetime.utcnow()
+    period_label = f"{start_date.strftime('%d/%m/%Y')} até {end_date.strftime('%d/%m/%Y')}"
 
-    def _fmt_2(v) -> str:
-        if v is None:
-            return f"0.00 {currency}"
-        if isinstance(v, bool):
-            return f"1.00 {currency}" if v else f"0.00 {currency}"
+    # ── Helpers ───────────────────────────────────────────────
+    def _fmt_dt(dt) -> str:
+        return dt.strftime("%d/%m/%Y %H:%M") if dt else ""
+
+    def _fmt_date(dt) -> str:
+        return dt.strftime("%d/%m/%Y") if dt else ""
+
+    def _fmt_money(v) -> str:
         try:
-            val = float(v)
-            return f"{val:,.2f} {currency}"
+            return f"{float(v):,.2f}"
         except Exception:
-            return f"{str(v)} {currency}"
-
-    def _fmt_money_plain(v) -> str:
-        if v is None:
             return "0.00"
-        try:
-            val = float(v)
-            return f"{val:,.2f}"
-        except Exception:
-            return str(v)
+
+    def _fmt_cur(v) -> str:
+        return f"{_fmt_money(v)} {currency}"
 
     def _fmt_int(v) -> str:
-        if v is None:
-            return "0"
         try:
-            return str(int(float(v)))
+            val = float(v)
+            return str(int(val)) if val == int(val) else f"{val:.2f}"
         except Exception:
-            return str(v)
+            return "0"
 
+    def _has_val(v) -> bool:
+        try:
+            return float(v) != 0.0
+        except Exception:
+            return bool(v)
+
+    # ── Beverage scope filter ─────────────────────────────────
     beverage_filter = or_(
         func.lower(func.coalesce(PDVProduct.category, "")).like("%bebida%"),
         func.lower(func.coalesce(PDVProduct.category, "")).like("%drink%"),
@@ -1515,41 +1512,12 @@ def get_sales_report_pdf(
         func.lower(func.coalesce(PDVProduct.name, "")).like("%juice%"),
         func.lower(func.coalesce(PDVProduct.name, "")).like("%soda%"),
     )
+    def _apply_scope(q):
+        return q.filter(beverage_filter) if product_scope == "beverages" else q
 
-    def _apply_product_scope(query):
-        if product_scope == "beverages":
-            return query.filter(beverage_filter)
-        return query
- 
-    issued_at = datetime.utcnow()
-    period_label = f"{_fmt_date(start_date)} até {_fmt_date(end_date)}"
- 
-    scope_label = "Apenas bebidas" if product_scope == "beverages" else "Todos os produtos"
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
-    styles = getSampleStyleSheet()
-    story = []
-
-    # Cabeçalho do Terminal
-    story.append(Paragraph(terminal.name or "SkyPDV", styles["Title"]))
-    if terminal.address:
-        story.append(Paragraph(terminal.address, styles["Normal"]))
-    story.append(Spacer(1, 12))
-
-    story.append(Paragraph("Relatório: Vendas (Resumo)", styles["Heading2"]))
-    story.append(Paragraph(f"Periodo: {period_label}", styles["Normal"]))
-    story.append(Paragraph(f"Escopo dos produtos: {scope_label}", styles["Normal"]))
-    story.append(Paragraph(f"Emitido em: {_fmt_dt(issued_at)} (Local)", styles["Normal"]))
-    story.append(Spacer(1, 12))
-
-    # Resumo Financeiro removido conforme solicitado — manter apenas produtos vendidos e depois pagamentos
-    # Nota: a tabela de pagamentos será adicionada após a tabela de produtos vendidos para melhor visibilidade
-
-    # (Removed "Produtos mais vendidos" section — PDF will include only summary, payments and sold products)
-
-    # Lista completa de produtos vendidos no periodo com estoque atual
-    story.append(Paragraph("Produtos vendidos no periodo", styles["Heading3"]))
-    sold_products_query = (
+    # ── 1. Product Sales data ─────────────────────────────────
+    summary = controller.get_sales_summary(db, terminal.id, start_date, end_date, filter_user_id)
+    sold_products_q = (
         db.query(
             PDVProduct.id.label("product_id"),
             PDVProduct.name,
@@ -1559,25 +1527,22 @@ def get_sales_report_pdf(
         )
         .join(PDVSale, PDVSale.id == PDVSaleItem.sale_id)
         .join(PDVProduct, PDVProduct.id == PDVSaleItem.product_id)
-        .outerjoin(
-            PDVInventory,
-            (PDVInventory.product_id == PDVProduct.id) & (PDVInventory.terminal_id == terminal.id),
-        )
+        .outerjoin(PDVInventory, (PDVInventory.product_id == PDVProduct.id) & (PDVInventory.terminal_id == terminal.id))
         .filter(PDVSale.terminal_id == terminal.id)
         .filter(PDVSale.created_at >= start_date)
         .filter(PDVSale.created_at <= end_date)
         .filter(PDVSale.status == "completed")
     )
     if filter_user_id:
-        sold_products_query = sold_products_query.filter(PDVSale.created_by == filter_user_id)
+        sold_products_q = sold_products_q.filter(PDVSale.created_by == filter_user_id)
     sold_products = (
-        _apply_product_scope(sold_products_query)
+        _apply_scope(sold_products_q)
         .group_by(PDVProduct.id, PDVProduct.name, PDVProduct.price)
         .order_by(func.sum(PDVSaleItem.quantity).desc())
         .all()
     )
     product_movements = (
-        _apply_product_scope(
+        _apply_scope(
             db.query(
                 PDVProduct.id.label("product_id"),
                 PDVStockMovement.movement_type,
@@ -1588,117 +1553,414 @@ def get_sales_report_pdf(
             .filter(PDVStockMovement.created_at >= start_date)
             .filter(PDVStockMovement.created_at <= end_date)
             .group_by(PDVProduct.id, PDVStockMovement.movement_type)
-        )
-        .all()
+        ).all()
     )
     movement_by_product = {}
-    for movement in product_movements:
-        stats = movement_by_product.setdefault(movement.product_id, {"entries": 0, "exits": 0})
-        amount = float(movement.quantity or 0)
-        if _mt_in(movement.movement_type, MovementType.IN, MovementType.RETURN):
-            stats["entries"] += amount
-        elif _mt_in(movement.movement_type, MovementType.OUT, MovementType.SALE):
-            stats["exits"] += abs(amount)
-    # Build table showing only products that were sold in the period,
-    # include initial stock and monetary total moved (price * qty)
-    sold_table_data = [["Produto", "Qtd vendida", "inicial", "Entradas", "Saidas", "Total"]]
+    for mv in product_movements:
+        stats = movement_by_product.setdefault(mv.product_id, {"entries": 0, "exits": 0})
+        amt = float(mv.quantity or 0)
+        if _mt_in(mv.movement_type, MovementType.IN, MovementType.RETURN):
+            stats["entries"] += amt
+        elif _mt_in(mv.movement_type, MovementType.OUT, MovementType.SALE):
+            stats["exits"] += abs(amt)
+
+    total_product_revenue = sum(
+        float(p.price or 0) * float(p.qty or 0) for p in sold_products if float(p.qty or 0) > 0
+    )
+
+    # ── 2. Service Orders data ────────────────────────────────
+    svc_q = (
+        db.query(PDVServiceOrder)
+        .filter(PDVServiceOrder.terminal_id == terminal.id)
+        .filter(PDVServiceOrder.created_at >= start_date)
+        .filter(PDVServiceOrder.created_at <= end_date)
+        .filter(PDVServiceOrder.status == "completed")
+        .order_by(PDVServiceOrder.created_at.desc())
+    )
+    if filter_user_id:
+        svc_q = svc_q.filter(PDVServiceOrder.created_by == filter_user_id)
+    service_orders = svc_q.all()
+
+    # Group by service name for summary
+    svc_by_name: dict = {}
+    for so in service_orders:
+        name = so.service_name or "Serviço"
+        entry = svc_by_name.setdefault(name, {"count": 0, "qty": 0.0, "total": 0.0})
+        entry["count"] += 1
+        entry["qty"] += float(so.quantity or 1)
+        entry["total"] += float(so.total or 0)
+    total_service_revenue = sum(v["total"] for v in svc_by_name.values())
+
+    # ── 3. Outflows data ──────────────────────────────────────
+    REASON_LABELS = {
+        "consumo_interno": "Consumo interno",
+        "cafetaria": "Cafetaria",
+        "cozinha": "Cozinha",
+        "perda": "Perda / Avaria",
+        "despesa_diaria": "Despesa diária",
+        "outro": "Outro",
+    }
+    outflows_q = (
+        db.query(PDVOutflowModel)
+        .filter(PDVOutflowModel.terminal_id == terminal.id)
+        .filter(PDVOutflowModel.is_active == True)
+        .filter(PDVOutflowModel.created_at >= start_date)
+        .filter(PDVOutflowModel.created_at <= end_date)
+        .order_by(PDVOutflowModel.created_at.desc())
+    )
+    outflows = outflows_q.all()
+    prod_outflows = [o for o in outflows if str(o.outflow_type).endswith("product")]
+    cash_outflows = [o for o in outflows if str(o.outflow_type).endswith("cash")]
+    total_prod_outflow_qty = sum(float(o.quantity or 0) for o in prod_outflows)
+    total_cash_outflow = sum(float(o.amount or 0) for o in cash_outflows)
+
+    # Fetch user names for outflow
+    out_user_ids = list({o.created_by for o in outflows if o.created_by})
+    out_users_map: dict = {}
+    if out_user_ids:
+        out_users = db.query(UserModel).filter(UserModel.id.in_(out_user_ids)).all()
+        out_users_map = {u.id: (u.name or u.username or str(u.id)) for u in out_users}
+
+    # ── Financial Summary ─────────────────────────────────────
+    gross_revenue = total_product_revenue + total_service_revenue
+    net_balance = gross_revenue - total_cash_outflow
+
+    # ── ReportLab styles ──────────────────────────────────────
+    C_ORANGE  = colors.HexColor("#F97316")
+    C_BLUE    = colors.HexColor("#3B82F6")
+    C_GREEN   = colors.HexColor("#10B981")
+    C_RED     = colors.HexColor("#EF4444")
+    C_DARK    = colors.HexColor("#1E1E2E")
+    C_LGRAY   = colors.HexColor("#F4F4F5")
+    C_MGRAY   = colors.HexColor("#A1A1AA")
+    C_BGRAY   = colors.HexColor("#E4E4E7")
+    C_WHITE   = colors.white
+    C_AMBER   = colors.HexColor("#FFF7ED")
+
+    styles = getSampleStyleSheet()
+    ST_TITLE = ParagraphStyle("RTitle", parent=styles["Title"], fontSize=20, textColor=C_DARK, spaceAfter=2)
+    ST_SUB   = ParagraphStyle("RSub",   parent=styles["Normal"], fontSize=9, textColor=C_MGRAY)
+    ST_H2    = ParagraphStyle("RH2",    parent=styles["Heading2"], fontSize=12, textColor=C_DARK, spaceBefore=14, spaceAfter=4)
+    ST_H3    = ParagraphStyle("RH3",    parent=styles["Heading3"], fontSize=10, textColor=C_DARK, spaceBefore=10, spaceAfter=3)
+    ST_CELL  = ParagraphStyle("RCell",  parent=styles["Normal"], fontSize=8, leading=10)
+    ST_FOOT  = ParagraphStyle("RFoot",  parent=styles["Normal"], fontSize=7, textColor=C_MGRAY, alignment=TA_CENTER)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=20*mm, rightMargin=20*mm,
+        topMargin=16*mm, bottomMargin=16*mm,
+    )
+    story = []
+
+    # ─────────────────────────────────────────────────────────
+    # HEADER
+    # ─────────────────────────────────────────────────────────
+    scope_label = "Apenas bebidas" if product_scope == "beverages" else "Todos os produtos"
+    story.append(Paragraph(terminal.name or "SkyPDV", ST_TITLE))
+    if terminal.address:
+        story.append(Paragraph(terminal.address, ST_SUB))
+    story.append(Spacer(1, 4))
+    story.append(HRFlowable(width="100%", thickness=2, color=C_ORANGE, spaceAfter=6))
+    story.append(Paragraph("Relatório Geral — Vendas · Serviços · Saídas", ST_H2))
+    story.append(Paragraph(f"Período: {period_label}  |  Escopo: {scope_label}  |  Emitido: {_fmt_dt(issued_at)}", ST_SUB))
+    story.append(Spacer(1, 10))
+
+    # ─────────────────────────────────────────────────────────
+    # KPI SUMMARY BLOCK (4 cards)
+    # ─────────────────────────────────────────────────────────
+    kpi_headers = [
+        Paragraph("<b>Receita Produtos</b>", ST_CELL),
+        Paragraph("<b>Receita Serviços</b>", ST_CELL),
+        Paragraph("<b>Total Saídas (Cash)</b>", ST_CELL),
+        Paragraph("<b>Balanço Líquido</b>", ST_CELL),
+    ]
+    kpi_values = [
+        Paragraph(f"<font size='13'><b>{_fmt_money(total_product_revenue)}</b></font><br/>{currency}", ST_CELL),
+        Paragraph(f"<font size='13'><b>{_fmt_money(total_service_revenue)}</b></font><br/>{currency}", ST_CELL),
+        Paragraph(f"<font size='13'><b>{_fmt_money(total_cash_outflow)}</b></font><br/>{currency}", ST_CELL),
+        Paragraph(f"<font size='13'><b>{_fmt_money(net_balance)}</b></font><br/>{currency}", ST_CELL),
+    ]
+    kpi_sub = [
+        Paragraph(f"{len(sold_products)} produto(s) — {int(summary.get('total_sales',0))} venda(s)", ST_CELL),
+        Paragraph(f"{len(service_orders)} serviço(s) prestado(s)", ST_CELL),
+        Paragraph(f"{len(cash_outflows)} despesa(s) + {len(prod_outflows)} saída(s) prod.", ST_CELL),
+        Paragraph(f"Receitas − Despesas de caixa", ST_CELL),
+    ]
+    cw = doc.width / 4
+    kpi_tbl = Table([kpi_headers, kpi_values, kpi_sub], colWidths=[cw]*4)
+    kpi_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), C_LGRAY),
+        ("BACKGROUND", (0, 1), (-1, 2), C_WHITE),
+        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
+        ("INNERGRID",  (0, 0), (-1, -1), 0.3, C_BGRAY),
+        ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        # Highlight net balance column based on sign
+        ("TEXTCOLOR", (3, 1), (3, 1), C_GREEN if net_balance >= 0 else C_RED),
+        ("TEXTCOLOR", (2, 1), (2, 1), C_RED),
+        ("TEXTCOLOR", (0, 1), (0, 1), C_BLUE),
+        ("TEXTCOLOR", (1, 1), (1, 1), C_GREEN),
+    ]))
+    story.append(kpi_tbl)
+    story.append(Spacer(1, 14))
+
+    # ─────────────────────────────────────────────────────────
+    # SECTION 1 — VENDAS DE PRODUTOS
+    # ─────────────────────────────────────────────────────────
+    story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
+    story.append(Paragraph("1. Vendas de Produtos", ST_H2))
+
+    # Payment methods summary
+    cash_total     = float(summary.get("cash_sales") or 0)
+    card_total     = float(summary.get("card_sales") or 0)
+    skywallet_total= float(summary.get("skywallet_sales") or 0)
+    mpesa_total    = float(summary.get("mpesa_sales") or 0)
+    mixed_total    = float(summary.get("mixed_sales") or 0)
+    pay_rows_all = [("Cash", cash_total), ("M-Pesa", mpesa_total), ("E-Mola/SkyWallet", skywallet_total), ("BCI POS", card_total), ("Misto", mixed_total)]
+    visible_pay = [(n, t) for n, t in pay_rows_all if _has_val(t)]
+    pay_total = sum(t for _, t in pay_rows_all)
+
+    story.append(Paragraph("Pagamentos por Método", ST_H3))
+    pay_data = [["Método de Pagamento", "Total"]]
+    if not visible_pay:
+        pay_data.append(["Sem pagamentos no período", _fmt_cur(0)])
+    else:
+        for name, total in visible_pay:
+            pay_data.append([name, _fmt_cur(total)])
+    pay_data.append(["TOTAL RECEBIDO", _fmt_cur(pay_total)])
+    pay_tbl = Table(pay_data, colWidths=[doc.width * 0.65, doc.width * 0.35])
+    pay_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), C_BLUE),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
+        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, 0), 8),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
+        ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
+        ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("ALIGN",      (1, 0), (1, -1), "RIGHT"),
+        ("FONTSIZE",   (0, 1), (-1, -1), 8),
+        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
+        ("INNERGRID",  (0, 0), (-1, -1), 0.25, C_BGRAY),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+    ]))
+    story.append(pay_tbl)
+    story.append(Spacer(1, 8))
+
+    story.append(Paragraph("Produtos Vendidos no Período", ST_H3))
+    prod_headers = ["Produto", "Qtd Vendida", "Stk Inicial", "Entradas", "Saídas", "Receita"]
+    prod_col_w_raw = [180, 60, 60, 52, 52, 90]
+    scale_p = doc.width / sum(prod_col_w_raw)
+    prod_col_w = [w * scale_p for w in prod_col_w_raw]
+
+    prod_table_data = [prod_headers]
+    prod_total_revenue = 0.0
     for product in sold_products:
         qty_sold = float(product.qty or 0)
         if qty_sold <= 0:
             continue
         price = float(getattr(product, "price", 0) or 0)
-        movement_stats = movement_by_product.get(product.product_id, {"entries": 0, "exits": 0})
-        entries = float(movement_stats.get("entries", 0) or 0)
-        exits = float(movement_stats.get("exits", 0) or 0)
+        mvs = movement_by_product.get(product.product_id, {"entries": 0, "exits": 0})
+        entries = float(mvs.get("entries", 0) or 0)
+        exits   = float(mvs.get("exits", 0) or 0)
         current_stock = float(product.stock or 0)
-        # estimate initial stock at period start
         initial_stock = current_stock - (entries - exits)
-        total_mov_value = price * qty_sold
-        sold_table_data.append([
+        rev = price * qty_sold
+        prod_total_revenue += rev
+        prod_table_data.append([
             str(product.name or ""),
             _fmt_int(qty_sold),
             _fmt_int(initial_stock),
             _fmt_int(entries),
             _fmt_int(exits),
-            _fmt_money_plain(total_mov_value),
+            _fmt_money(rev),
         ])
-    if len(sold_table_data) == 1:
-        sold_table_data.append(["Sem produtos vendidos", "0", "0", "0", "0", "0"])
-    # Adjust column widths to fit A4 page margins
-    sold_table = Table(sold_table_data, colWidths=[200, 60, 60, 50, 50, 100])
-    sold_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-            ]
-        )
-    )
-    story.append(sold_table)
-    story.append(Spacer(1, 12))
-
-    # Now append the Payments by method table below the products table (to improve visibility)
-    story.append(Paragraph("Pagamentos por Metodo", styles["Heading3"]))
-    cash_total = summary.get("cash_sales") or 0
-    card_total = summary.get("card_sales") or 0
-    skywallet_total = summary.get("skywallet_sales") or 0
-    mpesa_total = summary.get("mpesa_sales") or 0
-    mixed_total = summary.get("mixed_sales") or 0
-
-    def _has_value(v) -> bool:
-        try:
-            return float(v) != 0.0
-        except Exception:
-            return bool(v)
-
-    payment_rows = [
-        ("Cash", cash_total),
-        ("M-pesa", mpesa_total),
-        ("E-Mola", skywallet_total),
-        ("BCI POS", card_total),
-        ("Misto", mixed_total),
-    ]
-    visible_rows = [(name, total) for name, total in payment_rows if _has_value(total)]
-    payments_table_data = [["Metodo", "Total"]]
-    if not visible_rows:
-        payments_table_data.append(["Sem pagamentos", _fmt_2(0)])
+    if len(prod_table_data) == 1:
+        prod_table_data.append(["Sem produtos vendidos no período", "—", "—", "—", "—", "—"])
     else:
-        for name, total in visible_rows:
-            payments_table_data.append([name, _fmt_2(total)])
-    payments_table_data.append([
-        "Total pagamentos",
-        _fmt_2(cash_total + card_total + skywallet_total + mpesa_total + mixed_total),
-    ])
+        prod_table_data.append(["TOTAL", "", "", "", "", _fmt_money(prod_total_revenue)])
 
-    payments_table = Table(payments_table_data, colWidths=[200, 320])
-    payments_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-            ]
-        )
-    )
-    story.append(payments_table)
-    story.append(Spacer(1, 12))
+    prod_tbl = Table(prod_table_data, colWidths=prod_col_w, repeatRows=1)
+    prod_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), C_BLUE),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
+        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, 0), 7),
+        ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
+        ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
+        ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 1), (-1, -1), 7),
+        ("ALIGN",      (1, 1), (-1, -1), "RIGHT"),
+        ("ALIGN",      (0, -1), (0, -1), "LEFT"),
+        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+        ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
+    ]))
+    story.append(prod_tbl)
+    story.append(Spacer(1, 14))
+
+    # ─────────────────────────────────────────────────────────
+    # SECTION 2 — SERVIÇOS PRESTADOS
+    # ─────────────────────────────────────────────────────────
+    story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
+    story.append(Paragraph("2. Serviços Prestados", ST_H2))
+
+    svc_headers = ["Serviço", "N.º Ordens", "Qtd Total", "Receita Total"]
+    svc_cw_raw = [240, 70, 70, 110]
+    scale_s = doc.width / sum(svc_cw_raw)
+    svc_col_w = [w * scale_s for w in svc_cw_raw]
+
+    svc_table_data = [svc_headers]
+    if not svc_by_name:
+        svc_table_data.append(["Sem serviços prestados no período", "—", "—", "—"])
+    else:
+        for name, stats in sorted(svc_by_name.items(), key=lambda x: -x[1]["total"]):
+            svc_table_data.append([
+                name,
+                str(stats["count"]),
+                _fmt_int(stats["qty"]),
+                _fmt_cur(stats["total"]),
+            ])
+        svc_table_data.append(["TOTAL", str(len(service_orders)), "", _fmt_cur(total_service_revenue)])
+
+    svc_tbl = Table(svc_table_data, colWidths=svc_col_w, repeatRows=1)
+    svc_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), C_GREEN),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
+        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, 0), 7),
+        ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
+        ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
+        ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 1), (-1, -1), 7),
+        ("ALIGN",      (1, 1), (-1, -1), "RIGHT"),
+        ("ALIGN",      (0, -1), (0, -1), "LEFT"),
+        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+        ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
+    ]))
+    story.append(svc_tbl)
+    story.append(Spacer(1, 14))
+
+    # ─────────────────────────────────────────────────────────
+    # SECTION 3 — SAÍDAS (Produtos + Dinheiro)
+    # ─────────────────────────────────────────────────────────
+    story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
+    story.append(Paragraph("3. Saídas Registadas", ST_H2))
+
+    # Saídas sub-summary KPIs
+    out_kpi_data = [
+        [Paragraph("<b>Saídas de Produtos</b>", ST_CELL), Paragraph("<b>Despesas de Caixa</b>", ST_CELL)],
+        [
+            Paragraph(f"<font size='13'><b>{_fmt_int(total_prod_outflow_qty)} un.</b></font>", ST_CELL),
+            Paragraph(f"<font size='13'><b>{_fmt_cur(total_cash_outflow)}</b></font>", ST_CELL),
+        ],
+        [
+            Paragraph(f"{len(prod_outflows)} saída(s)", ST_CELL),
+            Paragraph(f"{len(cash_outflows)} despesa(s)", ST_CELL),
+        ],
+    ]
+    out_cw = doc.width / 2
+    out_kpi_tbl = Table(out_kpi_data, colWidths=[out_cw, out_cw])
+    out_kpi_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), C_LGRAY),
+        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
+        ("INNERGRID",  (0, 0), (-1, -1), 0.3, C_BGRAY),
+        ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("TEXTCOLOR",  (0, 1), (0, 1), C_BLUE),
+        ("TEXTCOLOR",  (1, 1), (1, 1), C_RED),
+    ]))
+    story.append(out_kpi_tbl)
+    story.append(Spacer(1, 8))
+
+    # Outflow detail table
+    out_headers = ["ID", "Data / Hora", "Tipo", "Motivo", "Item / Descrição", "Operador", "Qtd / Valor"]
+    out_cw_raw = [22, 44, 30, 42, 130, 60, 52]
+    scale_o = doc.width / sum(out_cw_raw)
+    out_col_w = [w * scale_o for w in out_cw_raw]
+
+    out_table_data = [out_headers]
+    for o in outflows:
+        is_product = str(o.outflow_type).endswith("product")
+        val_str = f"{_fmt_int(o.quantity)} un." if is_product else _fmt_cur(o.amount)
+        operator = out_users_map.get(o.created_by, "—") if o.created_by else "—"
+        reason = REASON_LABELS.get(o.reason or "", o.reason or "—")
+        tipo = "Produto" if is_product else "Dinheiro"
+        item = o.product.name if (o.product and o.product.name) else (o.title or "—")
+        out_table_data.append([
+            f"#{o.id}", _fmt_dt(o.created_at), tipo, reason, item, operator, val_str,
+        ])
+    if len(out_table_data) == 1:
+        out_table_data.append(["—", "Sem saídas no período", "—", "—", "—", "—", "—"])
+    else:
+        out_table_data.append(["TOTAL", "", "", "", "", "",
+            f"{_fmt_int(total_prod_outflow_qty)} un.\n{_fmt_cur(total_cash_outflow)}"])
+
+    out_tbl = Table(out_table_data, colWidths=out_col_w, repeatRows=1)
+    out_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), C_ORANGE),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
+        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, 0), 7),
+        ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
+        ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
+        ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 1), (-1, -1), 7),
+        ("ALIGN",      (-1, 1), (-1, -1), "RIGHT"),
+        ("ALIGN",      (0, -1), (-2, -1), "LEFT"),
+        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+        ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
+    ]))
+    story.append(out_tbl)
+    story.append(Spacer(1, 14))
+
+    # ─────────────────────────────────────────────────────────
+    # FOOTER
+    # ─────────────────────────────────────────────────────────
+    story.append(HRFlowable(width="100%", thickness=0.5, color=C_MGRAY))
+    story.append(Paragraph(
+        f"SkyPDV — Relatório gerado em {_fmt_dt(issued_at)}  |  Terminal: {terminal.name or '—'}",
+        ST_FOOT
+    ))
 
     doc.build(story)
     pdf_bytes = buffer.getvalue()
 
-    filename = f"Relatorio_Vendas_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.pdf"
-    headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
+    filename = f"Relatorio_Geral_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.pdf"
+    resp_headers = {"Content-Disposition": f'inline; filename="{filename}"'}
 
     if phone:
-        caption = f"Relatório de vendas {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} (SkyPDV)."
+        caption = f"Relatório Geral SkyPDV — {period_label}"
         send_whatsapp_file(phone, filename, "application/pdf", pdf_bytes, caption=caption)
         send_whatsapp_text(phone, caption)
 
-    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=resp_headers)
 
 
 @router.get("/reports/sales-summary.xlsx")
