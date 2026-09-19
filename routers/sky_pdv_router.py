@@ -2652,3 +2652,123 @@ def delete_account(
     current_user: User = Depends(get_current_user),
 ):
     return controller.delete_account(db, account_id, current_user.id)
+
+
+# ===================================================================
+# Services (Serviços) Endpoints
+# ===================================================================
+
+@router.get("/services", response_model=List[schemas.PDVServiceResponse])
+def get_services(
+    search: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Listar catálogo de serviços do terminal."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.get_services(
+        db, terminal.id, search=search, is_active=is_active, skip=skip, limit=limit
+    )
+
+
+@router.post("/services", response_model=schemas.PDVServiceResponse)
+def create_service(
+    data: schemas.PDVServiceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Criar novo serviço no catálogo."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.create_service(db, terminal.id, data, user_id=current_user.id)
+
+
+@router.put("/services/{service_id}", response_model=schemas.PDVServiceResponse)
+def update_service(
+    service_id: int,
+    data: schemas.PDVServiceUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Actualizar um serviço existente."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.update_service(db, terminal.id, service_id, data)
+
+
+@router.delete("/services/{service_id}")
+def delete_service(
+    service_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Desactivar um serviço."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.delete_service(db, terminal.id, service_id)
+
+
+# ===================================================================
+# Service Orders (Serviços Prestados) Endpoints
+# ===================================================================
+
+@router.post("/service-orders", response_model=schemas.PDVServiceOrderResponse)
+def create_service_order(
+    data: schemas.PDVServiceOrderCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Registar um serviço prestado e debitar no caixa actual."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.create_service_order(db, terminal.id, current_user.id, data)
+
+
+@router.get("/service-orders", response_model=List[schemas.PDVServiceOrderResponse])
+def get_service_orders(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    service_id: Optional[int] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Listar histórico de serviços prestados."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    filter_user_id = None
+    if not controller.is_terminal_admin(db, terminal.id, current_user.id):
+        filter_user_id = current_user.id
+    return controller.get_service_orders(
+        db, terminal.id, skip=skip, limit=limit,
+        start_date=start_date, end_date=end_date,
+        service_id=service_id, user_id=filter_user_id, status=status
+    )
+
+
+@router.get("/service-orders/summary", response_model=schemas.PDVServiceSummary)
+def get_service_summary(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Resumo estatístico e receita de serviços prestados."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    filter_user_id = None
+    if not controller.is_terminal_admin(db, terminal.id, current_user.id):
+        filter_user_id = current_user.id
+    return controller.get_service_summary(
+        db, terminal.id, start_date=start_date, end_date=end_date, user_id=filter_user_id
+    )
+
+
+@router.get("/service-orders/{order_id}", response_model=schemas.PDVServiceOrderResponse)
+def get_service_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Obter detalhes de um serviço prestado específico."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.get_service_order(db, terminal.id, order_id)

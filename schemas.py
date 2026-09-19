@@ -1105,3 +1105,89 @@ class SkyWalletDepositRequest(BaseModel):
     msisdn: str
 
 
+# ===================================================================
+# Services (Serviços) Schemas
+# ===================================================================
+
+class PDVServiceCreate(BaseModel):
+    """Schema para criar um serviço"""
+    name: str = Field(..., min_length=1, max_length=255)
+    price: Decimal = Field(..., gt=0)
+
+
+class PDVServiceUpdate(BaseModel):
+    """Schema para actualizar um serviço"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    price: Optional[Decimal] = Field(None, gt=0)
+    is_active: Optional[bool] = None
+
+
+class PDVServiceResponse(BaseModel):
+    """Schema de resposta de um serviço"""
+    id: int
+    terminal_id: int
+    name: str
+    price: Decimal
+    is_active: bool
+    created_by: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PDVServiceOrderCreate(BaseModel):
+    """Schema para registar um serviço prestado"""
+    service_id: int
+    quantity: Decimal = Field(default=Decimal("1"), gt=0)
+    discount_amount: Optional[Decimal] = Decimal("0.00")
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    payment_method: str = Field(..., description="cash | card | mpesa | skywallet | mixed")
+    amount_paid: Optional[Decimal] = None
+    notes: Optional[str] = None
+
+
+class PDVServiceOrderResponse(BaseModel):
+    """Schema de resposta de um serviço prestado"""
+    id: int
+    terminal_id: int
+    cash_register_id: Optional[int] = None
+    service_id: Optional[int] = None
+    service_name: str
+    service_price: Decimal
+    quantity: Decimal
+    discount_amount: Decimal
+    subtotal: Decimal
+    total: Decimal
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    payment_method: str
+    amount_paid: Decimal
+    change_amount: Decimal
+    notes: Optional[str] = None
+    receipt_number: Optional[str] = None
+    status: str
+    created_by: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PDVServiceSummary(BaseModel):
+    """Sumário/relatório de serviços prestados"""
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    total_orders: int
+    total_revenue: Decimal
+    total_discounts: Decimal
+    average_order_value: Decimal
+    cash_revenue: Decimal
+    card_revenue: Decimal
+    mpesa_revenue: Decimal
+    skywallet_revenue: Decimal
+    mixed_revenue: Decimal
+
+
+

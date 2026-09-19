@@ -90,6 +90,8 @@ class PDVTerminal(Base):
     sales = relationship("PDVSale", back_populates="terminal", cascade="all, delete-orphan")
     accounts = relationship("PDVAccount", back_populates="terminal", cascade="all, delete-orphan")
     invoice_customers = relationship("PDVInvoiceCustomer", back_populates="terminal", cascade="all, delete-orphan")
+    services = relationship("PDVService", back_populates="terminal", cascade="all, delete-orphan")
+    service_orders = relationship("PDVServiceOrder", back_populates="terminal", cascade="all, delete-orphan")
 
 
 class PDVTerminalUser(Base):
@@ -512,3 +514,55 @@ class RestaurantTable(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     restaurant = relationship("FastFoodRestaurant", back_populates="tables")
+
+
+# ==============================
+# Services (Serviços)
+# ==============================
+
+
+class PDVService(Base):
+    __tablename__ = "pdv_services"
+
+    id = Column(Integer, primary_key=True, index=True)
+    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    price = Column(DECIMAL(14, 2), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    terminal = relationship("PDVTerminal", back_populates="services")
+    orders = relationship("PDVServiceOrder", back_populates="service")
+
+
+class PDVServiceOrder(Base):
+    __tablename__ = "pdv_service_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=False)
+    cash_register_id = Column(Integer, ForeignKey("pdv_cash_registers.id", ondelete="SET NULL"), nullable=True)
+    service_id = Column(Integer, ForeignKey("pdv_services.id", ondelete="SET NULL"), nullable=True)
+    service_name = Column(String(255), nullable=False)  # snapshot do nome no momento
+    service_price = Column(DECIMAL(14, 2), nullable=False)  # snapshot do preço no momento
+    quantity = Column(DECIMAL(14, 3), nullable=False, default=1)
+    discount_amount = Column(DECIMAL(14, 2), default=0.00)
+    subtotal = Column(DECIMAL(14, 2), nullable=False)
+    total = Column(DECIMAL(14, 2), nullable=False)
+    customer_name = Column(String(255), nullable=True)
+    customer_phone = Column(String(50), nullable=True)
+    payment_method = Column(Enum(PaymentMethod), nullable=False)
+    amount_paid = Column(DECIMAL(14, 2), default=0.00)
+    change_amount = Column(DECIMAL(14, 2), default=0.00)
+    notes = Column(Text, nullable=True)
+    receipt_number = Column(String(50), nullable=True, unique=True)
+    status = Column(String(20), default="completed")
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    terminal = relationship("PDVTerminal", back_populates="service_orders")
+    service = relationship("PDVService", back_populates="orders")
+    cash_register = relationship("PDVCashRegister")
+    created_by_user = relationship("User", foreign_keys=[created_by])

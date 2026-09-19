@@ -20,7 +20,7 @@ from models import (
     PDVStockMovement, PDVCashRegister, PDVSale, PDVSaleItem, PDVAccount, PDVAccountItem,
     SourceType, MovementType, PaymentMethod, SaleType,
     PDVCategory, PDVPaymentMethod, PDVExpenseCategory, PDVExpense, PDVTerminalInvite, PDVTaxRecord,
-    PDVInvoiceCustomer
+    PDVInvoiceCustomer, PDVService, PDVServiceOrder
 )
 import schemas
 from reportlab.lib.pagesizes import A4
@@ -5514,3 +5514,267 @@ def close_account(db: Session, account_id: int, data: schemas.PDVAccountClose, u
     db.commit()
     db.refresh(account)
     return _account_to_dict(account)
+
+
+# ===================================================================
+# Services (Serviços) Controller
+# ===================================================================
+
+def get_services(
+    db: Session,
+    terminal_id: int,
+    search: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    skip: int = 0,
+    limit: int = 100
+):
+    query = db.query(PDVService).filter(PDVService.terminal_id == terminal_id)
+    if search:
+        query = query.filter(PDVService.name.ilike(f"%{search.strip()}%"))
+    if is_active is not None:
+        query = query.filter(PDVService.is_active == is_active)
+    return query.order_by(PDVService.name.asc()).offset(skip).limit(limit).all()
+
+
+def get_service(db: Session, terminal_id: int, service_id: int):
+    service = db.query(PDVService).filter(
+        PDVService.id == service_id,
+        PDVService.terminal_id == terminal_id
+    ).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return service
+
+
+def create_service(
+    db: Session,
+    terminal_id: int,
+    data: schemas.PDVServiceCreate,
+    user_id: Optional[int] = None
+):
+    service = PDVService(
+        terminal_id=terminal_id,
+        name=data.name.strip(),
+        price=data.price,
+        is_active=True,
+        created_by=user_id,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    db.add(service)
+    db.commit()
+    db.refresh(service)
+    return service
+
+
+def update_service(
+    db: Session,
+    terminal_id: int,
+    service_id: int,
+    data: schemas.PDVServiceUpdate
+):
+    service = get_service(db, terminal_id, service_id)
+    if data.name is not None:
+        service.name = data.name.strip()
+    if data.price is not None:
+        service.price = data.price
+    if data.is_active is not None:
+        service.is_active = data.is_active
+    service.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(service)
+    return service
+
+
+def delete_service(db: Session, terminal_id: int, service_id: int):
+    service = get_service(db, terminal_id, service_id)
+    service.is_active = False
+    service.updated_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True, "message": "Service deactivated successfully"}
+
+
+def create_service_order(
+    db: Session,
+    terminal_id: int,
+    user_id: int,
+    data: schemas.PDVServiceOrderCreate
+):
+    terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
+    if not terminal:
+        raise HTTPException(status_code=404, detail="Terminal not found")
+
+    import os
+    enforce_charging = os.getenv("SKYPDV_ACTIVATE_CHARGING", "false").strip().lower() in ("1", "true", "yes")
+    if enforce_charging and terminal.subscription_status == "suspended":
+        raise HTTPException(status_code=403, detail="Terminal suspended due to unpaid subscription.")
+
+    service = db.query(PDVService).filter(
+        PDVService.id == data.service_id,
+        PDVService.terminal_id == terminal_id
+    ).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    if not service.is_active:
+        raise HTTPException(status_code=400, detail="Service is inactive")
+
+    register = get_current_register(db, terminal_id, user_id=user_id)
+    if not register:
+        raise HTTPException(status_code=400, detail="Cash register is closed. Please open register first.")
+
+    quantity = Decimal(str(data.quantity or 1))
+    if quantity <= Decimal("0"):
+        raise HTTPException(status_code=400, detail="Quantity must be greater than zero")
+
+    service_price = Decimal(str(service.price))
+    subtotal = service_price * quantity
+    discount_amount = Decimal(str(data.discount_amount or "0.00"))
+    if discount_amount < Decimal("0.00"):
+        discount_amount = Decimal("0.00")
+    total = max(Decimal("0.00"), subtotal - discount_amount)
+
+    effective_amount_paid = Decimal(str(data.amount_paid)) if data.amount_paid is not None else total
+    payment_method = (data.payment_method or "cash").strip().lower()
+
+    if payment_method == "cash" and effective_amount_paid < total:
+        raise HTTPException(status_code=400, detail="Amount paid cannot be lower than total for cash payments")
+
+    change_amount = max(Decimal("0.00"), effective_amount_paid - total)
+    receipt_number = f"SRV-{terminal_id}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+
+    order = PDVServiceOrder(
+        terminal_id=terminal_id,
+        cash_register_id=register.id if register else None,
+        service_id=service.id,
+        service_name=service.name,
+        service_price=service_price,
+        quantity=quantity,
+        discount_amount=discount_amount,
+        subtotal=subtotal,
+        total=total,
+        customer_name=data.customer_name.strip() if data.customer_name else None,
+        customer_phone=data.customer_phone.strip() if data.customer_phone else None,
+        payment_method=payment_method,
+        amount_paid=effective_amount_paid,
+        change_amount=change_amount,
+        notes=data.notes,
+        receipt_number=receipt_number,
+        status="completed",
+        created_by=user_id,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    db.add(order)
+
+    # Atualizar caixa
+    if register:
+        register.total_sales += total
+        register.sales_count += 1
+        if payment_method == "cash":
+            register.total_cash += total
+        elif payment_method == "card":
+            register.total_card += total
+        elif payment_method == "mpesa":
+            register.total_mpesa += total
+        elif payment_method == "skywallet":
+            register.total_skywallet += total
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+def get_service_orders(
+    db: Session,
+    terminal_id: int,
+    skip: int = 0,
+    limit: int = 50,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    service_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    status: Optional[str] = None
+):
+    query = db.query(PDVServiceOrder).filter(PDVServiceOrder.terminal_id == terminal_id)
+    if user_id is not None:
+        query = query.filter(PDVServiceOrder.created_by == user_id)
+    if service_id is not None:
+        query = query.filter(PDVServiceOrder.service_id == service_id)
+    if status is not None:
+        query = query.filter(PDVServiceOrder.status == status)
+    if start_date:
+        query = query.filter(PDVServiceOrder.created_at >= start_date)
+    if end_date:
+        query = query.filter(PDVServiceOrder.created_at <= end_date)
+
+    return query.order_by(PDVServiceOrder.created_at.desc()).offset(skip).limit(limit).all()
+
+
+def get_service_order(db: Session, terminal_id: int, order_id: int):
+    order = db.query(PDVServiceOrder).filter(
+        PDVServiceOrder.id == order_id,
+        PDVServiceOrder.terminal_id == terminal_id
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Service order not found")
+    return order
+
+
+def get_service_summary(
+    db: Session,
+    terminal_id: int,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    user_id: Optional[int] = None
+):
+    query = db.query(PDVServiceOrder).filter(
+        PDVServiceOrder.terminal_id == terminal_id,
+        PDVServiceOrder.status == "completed"
+    )
+    if user_id is not None:
+        query = query.filter(PDVServiceOrder.created_by == user_id)
+    if start_date:
+        query = query.filter(PDVServiceOrder.created_at >= start_date)
+    if end_date:
+        query = query.filter(PDVServiceOrder.created_at <= end_date)
+
+    orders = query.all()
+    total_orders = len(orders)
+    total_revenue = sum((o.total for o in orders), Decimal("0.00"))
+    total_discounts = sum((o.discount_amount for o in orders), Decimal("0.00"))
+    average_order_value = (total_revenue / Decimal(str(total_orders))) if total_orders > 0 else Decimal("0.00")
+
+    cash_revenue = Decimal("0.00")
+    card_revenue = Decimal("0.00")
+    mpesa_revenue = Decimal("0.00")
+    skywallet_revenue = Decimal("0.00")
+    mixed_revenue = Decimal("0.00")
+
+    for o in orders:
+        pm = (str(o.payment_method.value if hasattr(o.payment_method, "value") else o.payment_method) or "").lower()
+        if "cash" in pm:
+            cash_revenue += o.total
+        elif "card" in pm:
+            card_revenue += o.total
+        elif "mpesa" in pm:
+            mpesa_revenue += o.total
+        elif "skywallet" in pm:
+            skywallet_revenue += o.total
+        elif "mixed" in pm:
+            mixed_revenue += o.total
+        else:
+            cash_revenue += o.total
+
+    return {
+        "period_start": start_date,
+        "period_end": end_date,
+        "total_orders": total_orders,
+        "total_revenue": total_revenue,
+        "total_discounts": total_discounts,
+        "average_order_value": average_order_value,
+        "cash_revenue": cash_revenue,
+        "card_revenue": card_revenue,
+        "mpesa_revenue": mpesa_revenue,
+        "skywallet_revenue": skywallet_revenue,
+        "mixed_revenue": mixed_revenue
+    }
