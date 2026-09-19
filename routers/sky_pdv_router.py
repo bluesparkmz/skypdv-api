@@ -1431,13 +1431,21 @@ def get_sales_report_pdf(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Relatório completo: Vendas de Produtos + Serviços Prestados + Saídas."""
+    """
+    Relatório Geral do Sistema:
+    - Vendas de Produtos (métricas globais, métodos de pagamento e produtos vendidos)
+    - Serviços Prestados (detalhe de ordens e resumo por serviço)
+    - Totais Consolidados por Meio de Pagamento (Dinheiro, M-Pesa, E-Mola, POS, Misto)
+    - Saídas (produtos retirados e despesas de caixa)
+    - Fecho Financeiro e Balanço de Caixa
+    """
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import mm
     from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, HRFlowable, PageBreak
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, HRFlowable, KeepTogether
+    from xml.sax.saxutils import escape as _esc
     from models import PDVServiceOrder, PDVOutflow as PDVOutflowModel, User as UserModel
 
     terminal = controller.get_terminal_required(db, current_user.id)
@@ -1515,7 +1523,7 @@ def get_sales_report_pdf(
     def _apply_scope(q):
         return q.filter(beverage_filter) if product_scope == "beverages" else q
 
-    # ── 1. Product Sales data ─────────────────────────────────
+    # ── 1. Dados de Vendas de Produtos ────────────────────────
     summary = controller.get_sales_summary(db, terminal.id, start_date, end_date, filter_user_id)
     sold_products_q = (
         db.query(
@@ -1567,8 +1575,17 @@ def get_sales_report_pdf(
     total_product_revenue = sum(
         float(p.price or 0) * float(p.qty or 0) for p in sold_products if float(p.qty or 0) > 0
     )
+    total_product_units = sum(float(p.qty or 0) for p in sold_products if float(p.qty or 0) > 0)
 
-    # ── 2. Service Orders data ────────────────────────────────
+    # Pagamentos de Vendas
+    sales_cash      = float(summary.get("cash_sales") or 0)
+    sales_card      = float(summary.get("card_sales") or 0)
+    sales_skywallet = float(summary.get("skywallet_sales") or 0)
+    sales_mpesa     = float(summary.get("mpesa_sales") or 0)
+    sales_mixed     = float(summary.get("mixed_sales") or 0)
+    sales_pay_total = sales_cash + sales_card + sales_skywallet + sales_mpesa + sales_mixed
+
+    # ── 2. Dados de Serviços Prestados ────────────────────────
     svc_q = (
         db.query(PDVServiceOrder)
         .filter(PDVServiceOrder.terminal_id == terminal.id)
@@ -1581,17 +1598,50 @@ def get_sales_report_pdf(
         svc_q = svc_q.filter(PDVServiceOrder.created_by == filter_user_id)
     service_orders = svc_q.all()
 
-    # Group by service name for summary
+    # Agrupamento de serviços por nome e por método de pagamento
     svc_by_name: dict = {}
+    svc_cash = 0.0
+    svc_mpesa = 0.0
+    svc_skywallet = 0.0
+    svc_card = 0.0
+    svc_other = 0.0
+
+    def _pm_str(pm):
+        if hasattr(pm, "value"):
+            return str(pm.value).lower()
+        return str(pm or "").lower()
+
     for so in service_orders:
-        name = so.service_name or "Serviço"
-        entry = svc_by_name.setdefault(name, {"count": 0, "qty": 0.0, "total": 0.0})
+        s_name = so.service_name or "Serviço"
+        entry = svc_by_name.setdefault(s_name, {"count": 0, "qty": 0.0, "total": 0.0})
         entry["count"] += 1
         entry["qty"] += float(so.quantity or 1)
-        entry["total"] += float(so.total or 0)
+        tot = float(so.total or 0)
+        entry["total"] += tot
+
+        pm_val = _pm_str(so.payment_method)
+        if "cash" in pm_val or "dinheiro" in pm_val:
+            svc_cash += tot
+        elif "mpesa" in pm_val:
+            svc_mpesa += tot
+        elif "skywallet" in pm_val or "emola" in pm_val or "e-mola" in pm_val:
+            svc_skywallet += tot
+        elif "card" in pm_val or "pos" in pm_val or "bci" in pm_val or "bim" in pm_val:
+            svc_card += tot
+        else:
+            svc_other += tot
+
     total_service_revenue = sum(v["total"] for v in svc_by_name.values())
 
-    # ── 3. Outflows data ──────────────────────────────────────
+    # ── 3. Consolidação Geral por Método de Pagamento ─────────
+    comb_cash      = sales_cash + svc_cash
+    comb_mpesa     = sales_mpesa + svc_mpesa
+    comb_skywallet = sales_skywallet + svc_skywallet
+    comb_card      = sales_card + svc_card
+    comb_mixed     = sales_mixed + svc_other
+    grand_total_revenue = comb_cash + comb_mpesa + comb_skywallet + comb_card + comb_mixed
+
+    # ── 4. Dados de Saídas ────────────────────────────────────
     REASON_LABELS = {
         "consumo_interno": "Consumo interno",
         "cafetaria": "Cafetaria",
@@ -1609,159 +1659,230 @@ def get_sales_report_pdf(
         .order_by(PDVOutflowModel.created_at.desc())
     )
     outflows = outflows_q.all()
-    prod_outflows = [o for o in outflows if str(o.outflow_type).endswith("product")]
-    cash_outflows = [o for o in outflows if str(o.outflow_type).endswith("cash")]
+
+    def _is_prod_outflow(o):
+        v = getattr(o.outflow_type, "value", str(o.outflow_type)).lower()
+        return "product" in v
+
+    prod_outflows = [o for o in outflows if _is_prod_outflow(o)]
+    cash_outflows = [o for o in outflows if not _is_prod_outflow(o)]
     total_prod_outflow_qty = sum(float(o.quantity or 0) for o in prod_outflows)
     total_cash_outflow = sum(float(o.amount or 0) for o in cash_outflows)
 
-    # Fetch user names for outflow
     out_user_ids = list({o.created_by for o in outflows if o.created_by})
     out_users_map: dict = {}
     if out_user_ids:
         out_users = db.query(UserModel).filter(UserModel.id.in_(out_user_ids)).all()
         out_users_map = {u.id: (u.name or u.username or str(u.id)) for u in out_users}
 
-    # ── Financial Summary ─────────────────────────────────────
-    gross_revenue = total_product_revenue + total_service_revenue
-    net_balance = gross_revenue - total_cash_outflow
+    # ── 5. Fecho de Caixa e Balanço Final ─────────────────────
+    net_cash_balance = comb_cash - total_cash_outflow
+    net_grand_balance = grand_total_revenue - total_cash_outflow
 
-    # ── ReportLab styles ──────────────────────────────────────
+    # ── Dados da Empresa (Terminal Settings) ──────────────────
+    t_settings = terminal.settings if isinstance(terminal.settings, dict) else {}
+    company_name = t_settings.get("receipt_company_name") or terminal.name or "SkyPDV"
+    company_address = t_settings.get("receipt_address") or terminal.address or ""
+    company_contacts = t_settings.get("receipt_contacts") or terminal.phone or ""
+    company_nuit = t_settings.get("receipt_nuit") or ""
+
+    # ── ReportLab Setup & Styles ──────────────────────────────
     C_ORANGE  = colors.HexColor("#F97316")
-    C_BLUE    = colors.HexColor("#3B82F6")
-    C_GREEN   = colors.HexColor("#10B981")
-    C_RED     = colors.HexColor("#EF4444")
+    C_BLUE    = colors.HexColor("#2563EB")
+    C_GREEN   = colors.HexColor("#059669")
+    C_RED     = colors.HexColor("#DC2626")
     C_DARK    = colors.HexColor("#1E1E2E")
-    C_LGRAY   = colors.HexColor("#F4F4F5")
-    C_MGRAY   = colors.HexColor("#A1A1AA")
-    C_BGRAY   = colors.HexColor("#E4E4E7")
+    C_LGRAY   = colors.HexColor("#F8FAFC")
+    C_MGRAY   = colors.HexColor("#94A3B8")
+    C_BGRAY   = colors.HexColor("#E2E8F0")
     C_WHITE   = colors.white
-    C_AMBER   = colors.HexColor("#FFF7ED")
+    C_AMBER   = colors.HexColor("#FEF3C7")
+    C_DARK_HDR= colors.HexColor("#0F172A")
 
     styles = getSampleStyleSheet()
-    ST_TITLE = ParagraphStyle("RTitle", parent=styles["Title"], fontSize=20, textColor=C_DARK, spaceAfter=2)
-    ST_SUB   = ParagraphStyle("RSub",   parent=styles["Normal"], fontSize=9, textColor=C_MGRAY)
-    ST_H2    = ParagraphStyle("RH2",    parent=styles["Heading2"], fontSize=12, textColor=C_DARK, spaceBefore=14, spaceAfter=4)
-    ST_H3    = ParagraphStyle("RH3",    parent=styles["Heading3"], fontSize=10, textColor=C_DARK, spaceBefore=10, spaceAfter=3)
-    ST_CELL  = ParagraphStyle("RCell",  parent=styles["Normal"], fontSize=8, leading=10)
+    ST_TITLE = ParagraphStyle("RTitle", parent=styles["Title"], fontSize=18, leading=22, textColor=C_DARK, alignment=TA_LEFT)
+    ST_SUB   = ParagraphStyle("RSub",   parent=styles["Normal"], fontSize=8, leading=11, textColor=C_MGRAY)
+    ST_H2    = ParagraphStyle("RH2",    parent=styles["Heading2"], fontSize=11, leading=14, textColor=C_DARK, spaceBefore=12, spaceAfter=4)
+    ST_H3    = ParagraphStyle("RH3",    parent=styles["Heading3"], fontSize=9, leading=12, textColor=C_DARK, spaceBefore=8, spaceAfter=3)
+    ST_CELL  = ParagraphStyle("RCell",  parent=styles["Normal"], fontSize=7.5, leading=9.5)
+    ST_CELL_R= ParagraphStyle("RCellR", parent=styles["Normal"], fontSize=7.5, leading=9.5, alignment=TA_RIGHT)
+    ST_CELL_B= ParagraphStyle("RCellB", parent=styles["Normal"], fontSize=7.5, leading=9.5, fontName="Helvetica-Bold")
+    ST_CELL_BR= ParagraphStyle("RCellBR", parent=styles["Normal"], fontSize=7.5, leading=9.5, fontName="Helvetica-Bold", alignment=TA_RIGHT)
     ST_FOOT  = ParagraphStyle("RFoot",  parent=styles["Normal"], fontSize=7, textColor=C_MGRAY, alignment=TA_CENTER)
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
-        leftMargin=20*mm, rightMargin=20*mm,
-        topMargin=16*mm, bottomMargin=16*mm,
+        leftMargin=14*mm, rightMargin=14*mm,
+        topMargin=14*mm, bottomMargin=14*mm,
     )
     story = []
+    w_usable = doc.width
 
     # ─────────────────────────────────────────────────────────
-    # HEADER
+    # CABEÇALHO EXECUTIVO
     # ─────────────────────────────────────────────────────────
-    scope_label = "Apenas bebidas" if product_scope == "beverages" else "Todos os produtos"
-    story.append(Paragraph(terminal.name or "SkyPDV", ST_TITLE))
-    if terminal.address:
-        story.append(Paragraph(terminal.address, ST_SUB))
-    story.append(Spacer(1, 4))
+    story.append(Paragraph(f"<b>{_esc(company_name)}</b>", ST_TITLE))
+    header_meta = []
+    if company_address:
+        header_meta.append(_esc(company_address))
+    if company_contacts:
+        header_meta.append(f"Tel: {_esc(company_contacts)}")
+    if company_nuit:
+        header_meta.append(f"NUIT: {_esc(company_nuit)}")
+    if header_meta:
+        story.append(Paragraph(" · ".join(header_meta), ST_SUB))
+    story.append(Spacer(1, 3))
     story.append(HRFlowable(width="100%", thickness=2, color=C_ORANGE, spaceAfter=6))
-    story.append(Paragraph("Relatório Geral — Vendas · Serviços · Saídas", ST_H2))
-    story.append(Paragraph(f"Período: {period_label}  |  Escopo: {scope_label}  |  Emitido: {_fmt_dt(issued_at)}", ST_SUB))
-    story.append(Spacer(1, 10))
+
+    scope_label = "Apenas bebidas" if product_scope == "beverages" else "Todos os produtos"
+    story.append(Paragraph("<b>RELATÓRIO GERAL DO SISTEMA</b>", ST_H2))
+    story.append(Paragraph(
+        f"<b>Período:</b> {period_label} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Escopo:</b> {scope_label} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Emitido:</b> {_fmt_dt(issued_at)} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Terminal:</b> {_esc(terminal.name or '')}",
+        ST_SUB
+    ))
+    story.append(Spacer(1, 8))
 
     # ─────────────────────────────────────────────────────────
-    # KPI SUMMARY BLOCK (4 cards)
+    # PAINEL DE INDICADORES GERAIS (KPIs)
     # ─────────────────────────────────────────────────────────
     kpi_headers = [
-        Paragraph("<b>Receita Produtos</b>", ST_CELL),
-        Paragraph("<b>Receita Serviços</b>", ST_CELL),
-        Paragraph("<b>Total Saídas (Cash)</b>", ST_CELL),
-        Paragraph("<b>Balanço Líquido</b>", ST_CELL),
+        Paragraph("<b>1. Vendas Produtos</b>", ST_CELL),
+        Paragraph("<b>2. Serviços Prestados</b>", ST_CELL),
+        Paragraph("<b>3. Total Arrecadado</b>", ST_CELL),
+        Paragraph("<b>4. Despesas Caixa</b>", ST_CELL),
+        Paragraph("<b>5. Balanço Líquido</b>", ST_CELL),
     ]
     kpi_values = [
-        Paragraph(f"<font size='13'><b>{_fmt_money(total_product_revenue)}</b></font><br/>{currency}", ST_CELL),
-        Paragraph(f"<font size='13'><b>{_fmt_money(total_service_revenue)}</b></font><br/>{currency}", ST_CELL),
-        Paragraph(f"<font size='13'><b>{_fmt_money(total_cash_outflow)}</b></font><br/>{currency}", ST_CELL),
-        Paragraph(f"<font size='13'><b>{_fmt_money(net_balance)}</b></font><br/>{currency}", ST_CELL),
+        Paragraph(f"<font size='11'><b>{_fmt_money(total_product_revenue)}</b></font><br/>{currency}", ST_CELL),
+        Paragraph(f"<font size='11'><b>{_fmt_money(total_service_revenue)}</b></font><br/>{currency}", ST_CELL),
+        Paragraph(f"<font size='11'><b>{_fmt_money(grand_total_revenue)}</b></font><br/>{currency}", ST_CELL),
+        Paragraph(f"<font size='11'><b>{_fmt_money(total_cash_outflow)}</b></font><br/>{currency}", ST_CELL),
+        Paragraph(f"<font size='11'><b>{_fmt_money(net_grand_balance)}</b></font><br/>{currency}", ST_CELL),
     ]
     kpi_sub = [
-        Paragraph(f"{len(sold_products)} produto(s) — {int(summary.get('total_sales',0))} venda(s)", ST_CELL),
-        Paragraph(f"{len(service_orders)} serviço(s) prestado(s)", ST_CELL),
-        Paragraph(f"{len(cash_outflows)} despesa(s) + {len(prod_outflows)} saída(s) prod.", ST_CELL),
-        Paragraph(f"Receitas − Despesas de caixa", ST_CELL),
+        Paragraph(f"{len(sold_products)} itens ({_fmt_int(total_product_units)} un.)", ST_CELL),
+        Paragraph(f"{len(service_orders)} ordens concl.", ST_CELL),
+        Paragraph("Vendas + Serviços", ST_CELL),
+        Paragraph(f"{len(cash_outflows)} despesa(s)", ST_CELL),
+        Paragraph("Arrecadado − Despesas", ST_CELL),
     ]
-    cw = doc.width / 4
-    kpi_tbl = Table([kpi_headers, kpi_values, kpi_sub], colWidths=[cw]*4)
+    cw_kpi = w_usable / 5.0
+    kpi_tbl = Table([kpi_headers, kpi_values, kpi_sub], colWidths=[cw_kpi]*5)
     kpi_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), C_LGRAY),
+        ("BACKGROUND", (0, 0), (-1, 0), C_DARK_HDR),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
         ("BACKGROUND", (0, 1), (-1, 2), C_WHITE),
         ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
         ("INNERGRID",  (0, 0), (-1, -1), 0.3, C_BGRAY),
         ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
         ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
-        # Highlight net balance column based on sign
-        ("TEXTCOLOR", (3, 1), (3, 1), C_GREEN if net_balance >= 0 else C_RED),
-        ("TEXTCOLOR", (2, 1), (2, 1), C_RED),
-        ("TEXTCOLOR", (0, 1), (0, 1), C_BLUE),
-        ("TEXTCOLOR", (1, 1), (1, 1), C_GREEN),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TEXTCOLOR",  (0, 1), (0, 1), C_BLUE),
+        ("TEXTCOLOR",  (1, 1), (1, 1), C_GREEN),
+        ("TEXTCOLOR",  (2, 1), (2, 1), C_DARK),
+        ("TEXTCOLOR",  (3, 1), (3, 1), C_RED),
+        ("TEXTCOLOR",  (4, 1), (4, 1), C_GREEN if net_grand_balance >= 0 else C_RED),
     ]))
     story.append(kpi_tbl)
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 10))
 
     # ─────────────────────────────────────────────────────────
-    # SECTION 1 — VENDAS DE PRODUTOS
+    # SECÇÃO 1 — RESUMO E VENDAS DE PRODUTOS
     # ─────────────────────────────────────────────────────────
     story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
     story.append(Paragraph("1. Vendas de Produtos", ST_H2))
 
-    # Payment methods summary
-    cash_total     = float(summary.get("cash_sales") or 0)
-    card_total     = float(summary.get("card_sales") or 0)
-    skywallet_total= float(summary.get("skywallet_sales") or 0)
-    mpesa_total    = float(summary.get("mpesa_sales") or 0)
-    mixed_total    = float(summary.get("mixed_sales") or 0)
-    pay_rows_all = [("Cash", cash_total), ("M-Pesa", mpesa_total), ("E-Mola/SkyWallet", skywallet_total), ("BCI POS", card_total), ("Misto", mixed_total)]
-    visible_pay = [(n, t) for n, t in pay_rows_all if _has_val(t)]
-    pay_total = sum(t for _, t in pay_rows_all)
+    # 1.1 Métricas Gerais de Vendas
+    cost_val = float(summary.get("total_cost") or 0)
+    profit_val = float(summary.get("gross_profit") or 0)
+    avg_val = float(summary.get("average_sale_value") or 0)
+    disc_val = float(summary.get("total_discounts") or 0)
+    tax_val = float(summary.get("total_taxes") or 0)
 
-    story.append(Paragraph("Pagamentos por Método", ST_H3))
-    pay_data = [["Método de Pagamento", "Total"]]
-    if not visible_pay:
-        pay_data.append(["Sem pagamentos no período", _fmt_cur(0)])
+    sales_metrics_data = [
+        [
+            Paragraph("<b>Total Vendas</b>", ST_CELL),
+            Paragraph("<b>Itens Vendidos</b>", ST_CELL),
+            Paragraph("<b>Ticket Médio</b>", ST_CELL),
+            Paragraph("<b>Custo Mercadoria</b>", ST_CELL),
+            Paragraph("<b>Lucro Bruto Est.</b>", ST_CELL),
+            Paragraph("<b>Descontos</b>", ST_CELL),
+            Paragraph("<b>Impostos</b>", ST_CELL),
+        ],
+        [
+            Paragraph(f"<b>{summary.get('total_sales', 0)}</b>", ST_CELL),
+            Paragraph(f"<b>{_fmt_int(summary.get('total_items_sold', 0))}</b>", ST_CELL),
+            Paragraph(f"<b>{_fmt_cur(avg_val)}</b>", ST_CELL),
+            Paragraph(f"<b>{_fmt_cur(cost_val)}</b>", ST_CELL),
+            Paragraph(f"<b>{_fmt_cur(profit_val)}</b>", ST_CELL),
+            Paragraph(f"<b>{_fmt_cur(disc_val)}</b>", ST_CELL),
+            Paragraph(f"<b>{_fmt_cur(tax_val)}</b>", ST_CELL),
+        ]
+    ]
+    cw_sm = w_usable / 7.0
+    sales_metrics_tbl = Table(sales_metrics_data, colWidths=[cw_sm]*7)
+    sales_metrics_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), C_LGRAY),
+        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
+        ("INNERGRID",  (0, 0), (-1, -1), 0.3, C_BGRAY),
+        ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("FONTSIZE",   (0, 0), (-1, -1), 7),
+    ]))
+    story.append(sales_metrics_tbl)
+    story.append(Spacer(1, 6))
+
+    # 1.2 Pagamentos das Vendas de Produtos
+    story.append(Paragraph("<b>Meios de Pagamento — Vendas de Produtos</b>", ST_H3))
+    sales_pay_rows = [
+        ("Dinheiro (Cash)", sales_cash),
+        ("M-Pesa", sales_mpesa),
+        ("E-Mola / SkyWallet", sales_skywallet),
+        ("BCI POS / Cartão", sales_card),
+        ("Misto", sales_mixed),
+    ]
+    visible_sales_pay = [(n, v) for n, v in sales_pay_rows if _has_val(v)]
+    sp_data = [["Método de Pagamento", "Total Vendas", "% do Total de Vendas"]]
+    if not visible_sales_pay:
+        sp_data.append(["Sem pagamentos registados", _fmt_cur(0), "0.0%"])
     else:
-        for name, total in visible_pay:
-            pay_data.append([name, _fmt_cur(total)])
-    pay_data.append(["TOTAL RECEBIDO", _fmt_cur(pay_total)])
-    pay_tbl = Table(pay_data, colWidths=[doc.width * 0.65, doc.width * 0.35])
-    pay_tbl.setStyle(TableStyle([
+        for name, val in visible_sales_pay:
+            pct = (val / sales_pay_total * 100) if sales_pay_total > 0 else 0.0
+            sp_data.append([name, _fmt_cur(val), f"{pct:.1f}%"])
+    sp_data.append(["TOTAL VENDAS DE PRODUTOS", _fmt_cur(sales_pay_total), "100.0%"])
+
+    sp_tbl = Table(sp_data, colWidths=[w_usable * 0.50, w_usable * 0.30, w_usable * 0.20])
+    sp_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), C_BLUE),
         ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
         ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, 0), 8),
+        ("FONTSIZE",   (0, 0), (-1, -1), 7.5),
         ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
         ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
         ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("ALIGN",      (1, 0), (1, -1), "RIGHT"),
-        ("FONTSIZE",   (0, 1), (-1, -1), 8),
+        ("ALIGN",      (1, 0), (-1, -1), "RIGHT"),
         ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
         ("INNERGRID",  (0, 0), (-1, -1), 0.25, C_BGRAY),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ("LEFTPADDING",   (0, 0), (-1, -1), 6),
         ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
     ]))
-    story.append(pay_tbl)
+    story.append(sp_tbl)
     story.append(Spacer(1, 8))
 
-    story.append(Paragraph("Produtos Vendidos no Período", ST_H3))
-    prod_headers = ["Produto", "Qtd Vendida", "Stk Inicial", "Entradas", "Saídas", "Receita"]
-    prod_col_w_raw = [180, 60, 60, 52, 52, 90]
-    scale_p = doc.width / sum(prod_col_w_raw)
+    # 1.3 Tabela Detalhada de Produtos Vendidos
+    story.append(Paragraph("<b>Lista de Produtos Vendidos no Período</b>", ST_H3))
+    prod_headers = ["Produto", "Qtd Vendida", "Stk Inicial", "Entradas", "Saídas", "Preço Unit.", "Receita Total"]
+    prod_col_w_raw = [170, 52, 50, 48, 48, 60, 72]
+    scale_p = w_usable / sum(prod_col_w_raw)
     prod_col_w = [w * scale_p for w in prod_col_w_raw]
 
     prod_table_data = [prod_headers]
-    prod_total_revenue = 0.0
     for product in sold_products:
         qty_sold = float(product.qty or 0)
         if qty_sold <= 0:
@@ -1773,179 +1894,338 @@ def get_sales_report_pdf(
         current_stock = float(product.stock or 0)
         initial_stock = current_stock - (entries - exits)
         rev = price * qty_sold
-        prod_total_revenue += rev
         prod_table_data.append([
-            str(product.name or ""),
+            Paragraph(_esc(str(product.name or "")), ST_CELL),
             _fmt_int(qty_sold),
             _fmt_int(initial_stock),
             _fmt_int(entries),
             _fmt_int(exits),
+            _fmt_money(price),
             _fmt_money(rev),
         ])
     if len(prod_table_data) == 1:
-        prod_table_data.append(["Sem produtos vendidos no período", "—", "—", "—", "—", "—"])
+        prod_table_data.append(["Sem produtos vendidos no período", "—", "—", "—", "—", "—", "—"])
     else:
-        prod_table_data.append(["TOTAL", "", "", "", "", _fmt_money(prod_total_revenue)])
+        prod_table_data.append(["TOTAL", _fmt_int(total_product_units), "", "", "", "", _fmt_cur(total_product_revenue)])
 
     prod_tbl = Table(prod_table_data, colWidths=prod_col_w, repeatRows=1)
     prod_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), C_BLUE),
         ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
         ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, 0), 7),
+        ("FONTSIZE",   (0, 0), (-1, -1), 7),
         ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
         ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
         ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 1), (-1, -1), 7),
         ("ALIGN",      (1, 1), (-1, -1), "RIGHT"),
         ("ALIGN",      (0, -1), (0, -1), "LEFT"),
         ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ("LEFTPADDING",   (0, 0), (-1, -1), 4),
         ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
         ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
         ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
     ]))
     story.append(prod_tbl)
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 12))
 
     # ─────────────────────────────────────────────────────────
-    # SECTION 2 — SERVIÇOS PRESTADOS
+    # SECÇÃO 2 — SERVIÇOS PRESTADOS
     # ─────────────────────────────────────────────────────────
     story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
     story.append(Paragraph("2. Serviços Prestados", ST_H2))
 
-    svc_headers = ["Serviço", "N.º Ordens", "Qtd Total", "Receita Total"]
-    svc_cw_raw = [240, 70, 70, 110]
-    scale_s = doc.width / sum(svc_cw_raw)
-    svc_col_w = [w * scale_s for w in svc_cw_raw]
+    # 2.1 Detalhe de Ordens de Serviços
+    svc_detail_headers = ["Recibo/ID", "Data / Hora", "Serviço", "Cliente", "Qtd", "Método", "Total"]
+    svc_detail_cw_raw = [38, 48, 140, 90, 26, 48, 60]
+    scale_sd = w_usable / sum(svc_detail_cw_raw)
+    svc_detail_cw = [w * scale_sd for w in svc_detail_cw_raw]
 
-    svc_table_data = [svc_headers]
-    if not svc_by_name:
-        svc_table_data.append(["Sem serviços prestados no período", "—", "—", "—"])
+    svc_detail_data = [svc_detail_headers]
+    for so in service_orders:
+        rec_id = str(so.receipt_number or f"#{so.id}")
+        c_name = str(so.customer_name or "Balcão")
+        pm_display = _pm_str(so.payment_method).capitalize()
+        svc_detail_data.append([
+            rec_id,
+            _fmt_dt(so.created_at),
+            Paragraph(_esc(str(so.service_name or "")), ST_CELL),
+            Paragraph(_esc(c_name), ST_CELL),
+            _fmt_int(so.quantity or 1),
+            pm_display,
+            _fmt_money(so.total or 0),
+        ])
+    if len(svc_detail_data) == 1:
+        svc_detail_data.append(["—", "Sem serviços prestados no período", "—", "—", "—", "—", "—"])
     else:
-        for name, stats in sorted(svc_by_name.items(), key=lambda x: -x[1]["total"]):
-            svc_table_data.append([
-                name,
-                str(stats["count"]),
-                _fmt_int(stats["qty"]),
-                _fmt_cur(stats["total"]),
-            ])
-        svc_table_data.append(["TOTAL", str(len(service_orders)), "", _fmt_cur(total_service_revenue)])
+        svc_detail_data.append(["TOTAL", "", "", f"{len(service_orders)} ordens", "", "", _fmt_cur(total_service_revenue)])
 
-    svc_tbl = Table(svc_table_data, colWidths=svc_col_w, repeatRows=1)
-    svc_tbl.setStyle(TableStyle([
+    svc_detail_tbl = Table(svc_detail_data, colWidths=svc_detail_cw, repeatRows=1)
+    svc_detail_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), C_GREEN),
         ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
         ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, 0), 7),
+        ("FONTSIZE",   (0, 0), (-1, -1), 7),
         ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
         ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
         ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 1), (-1, -1), 7),
-        ("ALIGN",      (1, 1), (-1, -1), "RIGHT"),
-        ("ALIGN",      (0, -1), (0, -1), "LEFT"),
+        ("ALIGN",      (4, 1), (-1, -1), "RIGHT"),
+        ("ALIGN",      (0, -1), (2, -1), "LEFT"),
         ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ("LEFTPADDING",   (0, 0), (-1, -1), 4),
         ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
         ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
         ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
     ]))
-    story.append(svc_tbl)
-    story.append(Spacer(1, 14))
+    story.append(svc_detail_tbl)
+    story.append(Spacer(1, 6))
+
+    # 2.2 Resumo por Tipo de Serviço
+    if svc_by_name:
+        story.append(Paragraph("<b>Resumo por Tipo de Serviço</b>", ST_H3))
+        svc_sum_headers = ["Serviço", "N.º Ordens", "Qtd Prestada", "Receita Total", "% dos Serviços"]
+        svc_sum_cw = [w_usable * 0.40, w_usable * 0.15, w_usable * 0.15, w_usable * 0.18, w_usable * 0.12]
+        svc_sum_data = [svc_sum_headers]
+        for name, stats in sorted(svc_by_name.items(), key=lambda x: -x[1]["total"]):
+            pct_s = (stats["total"] / total_service_revenue * 100) if total_service_revenue > 0 else 0.0
+            svc_sum_data.append([
+                Paragraph(_esc(name), ST_CELL),
+                str(stats["count"]),
+                _fmt_int(stats["qty"]),
+                _fmt_cur(stats["total"]),
+                f"{pct_s:.1f}%",
+            ])
+        svc_sum_data.append(["TOTAL", str(len(service_orders)), "", _fmt_cur(total_service_revenue), "100.0%"])
+
+        svc_sum_tbl = Table(svc_sum_data, colWidths=svc_sum_cw, repeatRows=1)
+        svc_sum_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), C_LGRAY),
+            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0, 0), (-1, -1), 7),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
+            ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
+            ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
+            ("ALIGN",      (1, 0), (-1, -1), "RIGHT"),
+            ("ALIGN",      (0, -1), (0, -1), "LEFT"),
+            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
+        ]))
+        story.append(svc_sum_tbl)
+        story.append(Spacer(1, 10))
 
     # ─────────────────────────────────────────────────────────
-    # SECTION 3 — SAÍDAS (Produtos + Dinheiro)
+    # SECÇÃO 3 — CONSOLIDAÇÃO GERAL POR MEIO DE PAGAMENTO
     # ─────────────────────────────────────────────────────────
     story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
-    story.append(Paragraph("3. Saídas Registadas", ST_H2))
+    story.append(Paragraph("3. Total Geral Consolidado por Meio de Pagamento", ST_H2))
+    story.append(Paragraph(
+        "Total arrecadado agrupando <b>Vendas de Produtos</b> e <b>Serviços Prestados</b>:",
+        ST_SUB
+    ))
+    story.append(Spacer(1, 4))
 
-    # Saídas sub-summary KPIs
+    comb_pay_headers = ["Método de Pagamento", "Vendas Produtos", "Serviços Prestados", "TOTAL ARRECADADO", "% Geral"]
+    comb_cw = [w_usable * 0.32, w_usable * 0.20, w_usable * 0.20, w_usable * 0.18, w_usable * 0.10]
+    comb_rows = [
+        ("Dinheiro (Cash)",        sales_cash,      svc_cash,      comb_cash),
+        ("M-Pesa",                 sales_mpesa,     svc_mpesa,     comb_mpesa),
+        ("E-Mola / SkyWallet",     sales_skywallet, svc_skywallet, comb_skywallet),
+        ("BCI POS / Cartão",       sales_card,      svc_card,      comb_card),
+        ("Misto / Outros",         sales_mixed,     svc_other,     comb_mixed),
+    ]
+    comb_table_data = [comb_pay_headers]
+    for m_name, v_prod, v_svc, v_tot in comb_rows:
+        pct_g = (v_tot / grand_total_revenue * 100) if grand_total_revenue > 0 else 0.0
+        comb_table_data.append([
+            m_name,
+            _fmt_cur(v_prod),
+            _fmt_cur(v_svc),
+            _fmt_cur(v_tot),
+            f"{pct_g:.1f}%",
+        ])
+    comb_table_data.append([
+        "TOTAL ARRECADADO",
+        _fmt_cur(sales_pay_total),
+        _fmt_cur(total_service_revenue),
+        _fmt_cur(grand_total_revenue),
+        "100.0%",
+    ])
+
+    comb_tbl = Table(comb_table_data, colWidths=comb_cw, repeatRows=1)
+    comb_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), C_DARK_HDR),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
+        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, -1), 7.5),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
+        ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
+        ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("ALIGN",      (1, 0), (-1, -1), "RIGHT"),
+        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
+        ("INNERGRID",  (0, 0), (-1, -1), 0.25, C_BGRAY),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        # Highlight cash row
+        ("TEXTCOLOR",  (0, 1), (-1, 1), C_BLUE),
+        ("FONTNAME",   (0, 1), (-1, 1), "Helvetica-Bold"),
+    ]))
+    story.append(comb_tbl)
+    story.append(Spacer(1, 12))
+
+    # ─────────────────────────────────────────────────────────
+    # SECÇÃO 4 — SAÍDAS (PRODUTOS E DINHEIRO)
+    # ─────────────────────────────────────────────────────────
+    story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
+    story.append(Paragraph("4. Saídas Registadas", ST_H2))
+
+    # KPIs de saídas
     out_kpi_data = [
-        [Paragraph("<b>Saídas de Produtos</b>", ST_CELL), Paragraph("<b>Despesas de Caixa</b>", ST_CELL)],
+        [Paragraph("<b>Saídas de Produtos</b>", ST_CELL), Paragraph("<b>Despesas de Caixa (Dinheiro)</b>", ST_CELL)],
         [
-            Paragraph(f"<font size='13'><b>{_fmt_int(total_prod_outflow_qty)} un.</b></font>", ST_CELL),
-            Paragraph(f"<font size='13'><b>{_fmt_cur(total_cash_outflow)}</b></font>", ST_CELL),
+            Paragraph(f"<font size='12'><b>{_fmt_int(total_prod_outflow_qty)} un.</b></font>", ST_CELL),
+            Paragraph(f"<font size='12'><b>{_fmt_cur(total_cash_outflow)}</b></font>", ST_CELL),
         ],
         [
-            Paragraph(f"{len(prod_outflows)} saída(s)", ST_CELL),
-            Paragraph(f"{len(cash_outflows)} despesa(s)", ST_CELL),
+            Paragraph(f"{len(prod_outflows)} saída(s) de stock", ST_CELL),
+            Paragraph(f"{len(cash_outflows)} despesa(s) de caixa", ST_CELL),
         ],
     ]
-    out_cw = doc.width / 2
-    out_kpi_tbl = Table(out_kpi_data, colWidths=[out_cw, out_cw])
+    out_cw_kpi = w_usable / 2.0
+    out_kpi_tbl = Table(out_kpi_data, colWidths=[out_cw_kpi, out_cw_kpi])
     out_kpi_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), C_LGRAY),
         ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
         ("INNERGRID",  (0, 0), (-1, -1), 0.3, C_BGRAY),
         ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
         ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("TEXTCOLOR",  (0, 1), (0, 1), C_BLUE),
         ("TEXTCOLOR",  (1, 1), (1, 1), C_RED),
     ]))
     story.append(out_kpi_tbl)
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
 
-    # Outflow detail table
-    out_headers = ["ID", "Data / Hora", "Tipo", "Motivo", "Item / Descrição", "Operador", "Qtd / Valor"]
-    out_cw_raw = [22, 44, 30, 42, 130, 60, 52]
-    scale_o = doc.width / sum(out_cw_raw)
+    # Detalhe de saídas
+    out_headers = ["ID", "Data / Hora", "Tipo", "Motivo", "Item / Descrição", "Destino", "Operador", "Qtd / Valor"]
+    out_cw_raw = [20, 44, 28, 40, 110, 46, 50, 52]
+    scale_o = w_usable / sum(out_cw_raw)
     out_col_w = [w * scale_o for w in out_cw_raw]
 
     out_table_data = [out_headers]
     for o in outflows:
-        is_product = str(o.outflow_type).endswith("product")
+        is_product = _is_prod_outflow(o)
         val_str = f"{_fmt_int(o.quantity)} un." if is_product else _fmt_cur(o.amount)
         operator = out_users_map.get(o.created_by, "—") if o.created_by else "—"
         reason = REASON_LABELS.get(o.reason or "", o.reason or "—")
         tipo = "Produto" if is_product else "Dinheiro"
         item = o.product.name if (o.product and o.product.name) else (o.title or "—")
+        dest = o.destination or "—"
         out_table_data.append([
-            f"#{o.id}", _fmt_dt(o.created_at), tipo, reason, item, operator, val_str,
+            f"#{o.id}",
+            _fmt_dt(o.created_at),
+            tipo,
+            reason,
+            Paragraph(_esc(item), ST_CELL),
+            Paragraph(_esc(dest), ST_CELL),
+            Paragraph(_esc(operator), ST_CELL),
+            val_str,
         ])
     if len(out_table_data) == 1:
-        out_table_data.append(["—", "Sem saídas no período", "—", "—", "—", "—", "—"])
+        out_table_data.append(["—", "Sem saídas no período", "—", "—", "—", "—", "—", "—"])
     else:
-        out_table_data.append(["TOTAL", "", "", "", "", "",
-            f"{_fmt_int(total_prod_outflow_qty)} un.\n{_fmt_cur(total_cash_outflow)}"])
+        out_table_data.append(["TOTAL", "", "", "", "", "", "",
+            f"{_fmt_int(total_prod_outflow_qty)} un. | {_fmt_cur(total_cash_outflow)}"])
 
     out_tbl = Table(out_table_data, colWidths=out_col_w, repeatRows=1)
     out_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), C_ORANGE),
         ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
         ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, 0), 7),
+        ("FONTSIZE",   (0, 0), (-1, -1), 7),
         ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
         ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
         ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 1), (-1, -1), 7),
         ("ALIGN",      (-1, 1), (-1, -1), "RIGHT"),
         ("ALIGN",      (0, -1), (-2, -1), "LEFT"),
         ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ("LEFTPADDING",   (0, 0), (-1, -1), 4),
         ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
         ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
         ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
     ]))
     story.append(out_tbl)
+    story.append(Spacer(1, 12))
+
+    # ─────────────────────────────────────────────────────────
+    # SECÇÃO 5 — FECHO FINANCEIRO E BALANÇO DE CAIXA
+    # ─────────────────────────────────────────────────────────
+    story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
+    story.append(Paragraph("5. Fecho Financeiro e Balanço de Caixa", ST_H2))
+
+    elec_total = comb_mpesa + comb_skywallet + comb_card + comb_mixed
+    closing_data = [
+        ["Rubrica", "Descrição", "Valor"],
+        ["(+) Dinheiro em Vendas", "Vendas de produtos recebidas em dinheiro físico", _fmt_cur(sales_cash)],
+        ["(+) Dinheiro em Serviços", "Ordens de serviços recebidas em dinheiro físico", _fmt_cur(svc_cash)],
+        ["(=) TOTAL DINHEIRO ENTRADO", "Total bruto arrecadado em dinheiro físico no caixa", _fmt_cur(comb_cash)],
+        ["(−) Despesas de Caixa (Saídas)", "Saídas monetárias e pagamentos em dinheiro retirados do caixa", _fmt_cur(total_cash_outflow)],
+        ["(=) SALDO LÍQUIDO EM CAIXA", "Dinheiro físico disponível no caixa (Entradas − Saídas)", _fmt_cur(net_cash_balance)],
+        ["(+) Meios Digitais / POS", f"M-Pesa ({_fmt_cur(comb_mpesa)}) + E-Mola ({_fmt_cur(comb_skywallet)}) + POS ({_fmt_cur(comb_card)})", _fmt_cur(elec_total)],
+        ["(=) RESULTADO GLOBAL LÍQUIDO", "Total Arrecadado Geral (Vendas + Serviços) − Despesas de Caixa", _fmt_cur(net_grand_balance)],
+    ]
+    cw_cl = [w_usable * 0.32, w_usable * 0.46, w_usable * 0.22]
+    closing_tbl = Table(closing_data, colWidths=cw_cl)
+    closing_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), C_DARK_HDR),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
+        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, -1), 8),
+        ("ALIGN",      (2, 0), (2, -1), "RIGHT"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, C_LGRAY]),
+        # Highlight TOTAL DINHEIRO ENTRADO
+        ("BACKGROUND", (0, 3), (-1, 3), colors.HexColor("#EFF6FF")),
+        ("FONTNAME",   (0, 3), (-1, 3), "Helvetica-Bold"),
+        ("TEXTCOLOR",  (0, 3), (-1, 3), C_BLUE),
+        # Highlight Despesas
+        ("TEXTCOLOR",  (0, 4), (-1, 4), C_RED),
+        # Highlight SALDO LÍQUIDO EM CAIXA
+        ("BACKGROUND", (0, 5), (-1, 5), C_AMBER),
+        ("FONTNAME",   (0, 5), (-1, 5), "Helvetica-Bold"),
+        ("TEXTCOLOR",  (0, 5), (-1, 5), C_GREEN if net_cash_balance >= 0 else C_RED),
+        # Highlight RESULTADO GLOBAL LÍQUIDO
+        ("BACKGROUND", (0, 7), (-1, 7), colors.HexColor("#ECFDF5") if net_grand_balance >= 0 else colors.HexColor("#FEF2F2")),
+        ("FONTNAME",   (0, 7), (-1, 7), "Helvetica-Bold"),
+        ("TEXTCOLOR",  (0, 7), (-1, 7), C_GREEN if net_grand_balance >= 0 else C_RED),
+        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
+        ("INNERGRID",  (0, 0), (-1, -1), 0.25, C_BGRAY),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+    ]))
+    story.append(closing_tbl)
     story.append(Spacer(1, 14))
 
     # ─────────────────────────────────────────────────────────
-    # FOOTER
+    # RODAPÉ
     # ─────────────────────────────────────────────────────────
     story.append(HRFlowable(width="100%", thickness=0.5, color=C_MGRAY))
     story.append(Paragraph(
-        f"SkyPDV — Relatório gerado em {_fmt_dt(issued_at)}  |  Terminal: {terminal.name or '—'}",
+        f"SkyPDV — Relatório Geral gerado em {_fmt_dt(issued_at)}  |  Terminal: {_esc(terminal.name or '—')}  |  {_esc(company_name)}",
         ST_FOOT
     ))
 
@@ -1973,12 +2253,19 @@ def get_sales_report_excel(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Exporta o resumo de vendas em Excel (XLSX).
-    Usa os mesmos filtros do relatório PDF.
+    Exporta o relatório geral completo em Excel (XLSX):
+    - Resumo Geral & Fecho Financeiro
+    - Meios de Pagamento Consolidados
+    - Produtos Vendidos
+    - Serviços Prestados
+    - Saídas Registadas
     """
-    terminal = controller.get_terminal_required(db, current_user.id)
+    from models import PDVServiceOrder, PDVOutflow as PDVOutflowModel, User as UserModel
 
-    # Datas padrão: mês atual
+    terminal = controller.get_terminal_required(db, current_user.id)
+    currency = terminal.currency or "MT"
+
+    # Datas padrão
     if not start_date:
         start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     else:
@@ -1992,84 +2279,151 @@ def get_sales_report_excel(
             end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
+
+    # 1. Resumo de Vendas
     summary = controller.get_sales_summary(db, terminal.id, start_date, end_date, filter_user_id)
+    sales_cash      = float(summary.get("cash_sales") or 0)
+    sales_card      = float(summary.get("card_sales") or 0)
+    sales_skywallet = float(summary.get("skywallet_sales") or 0)
+    sales_mpesa     = float(summary.get("mpesa_sales") or 0)
+    sales_mixed     = float(summary.get("mixed_sales") or 0)
+    total_sales_pay = sales_cash + sales_card + sales_skywallet + sales_mpesa + sales_mixed
 
+    # 2. Serviços Prestados
+    svc_q = (
+        db.query(PDVServiceOrder)
+        .filter(PDVServiceOrder.terminal_id == terminal.id)
+        .filter(PDVServiceOrder.created_at >= start_date)
+        .filter(PDVServiceOrder.created_at <= end_date)
+        .filter(PDVServiceOrder.status == "completed")
+        .order_by(PDVServiceOrder.created_at.desc())
+    )
+    if filter_user_id:
+        svc_q = svc_q.filter(PDVServiceOrder.created_by == filter_user_id)
+    service_orders = svc_q.all()
+
+    def _pm_str(pm):
+        if hasattr(pm, "value"):
+            return str(pm.value).lower()
+        return str(pm or "").lower()
+
+    svc_cash = 0.0
+    svc_mpesa = 0.0
+    svc_skywallet = 0.0
+    svc_card = 0.0
+    svc_other = 0.0
+    for so in service_orders:
+        tot = float(so.total or 0)
+        pm_val = _pm_str(so.payment_method)
+        if "cash" in pm_val or "dinheiro" in pm_val:
+            svc_cash += tot
+        elif "mpesa" in pm_val:
+            svc_mpesa += tot
+        elif "skywallet" in pm_val or "emola" in pm_val or "e-mola" in pm_val:
+            svc_skywallet += tot
+        elif "card" in pm_val or "pos" in pm_val or "bci" in pm_val or "bim" in pm_val:
+            svc_card += tot
+        else:
+            svc_other += tot
+    total_service_rev = svc_cash + svc_mpesa + svc_skywallet + svc_card + svc_other
+
+    # 3. Saídas
+    outflows_q = (
+        db.query(PDVOutflowModel)
+        .filter(PDVOutflowModel.terminal_id == terminal.id)
+        .filter(PDVOutflowModel.is_active == True)
+        .filter(PDVOutflowModel.created_at >= start_date)
+        .filter(PDVOutflowModel.created_at <= end_date)
+        .order_by(PDVOutflowModel.created_at.desc())
+    )
+    outflows = outflows_q.all()
+
+    def _is_prod_outflow(o):
+        v = getattr(o.outflow_type, "value", str(o.outflow_type)).lower()
+        return "product" in v
+
+    prod_outflows = [o for o in outflows if _is_prod_outflow(o)]
+    cash_outflows = [o for o in outflows if not _is_prod_outflow(o)]
+    total_prod_outflow_qty = sum(float(o.quantity or 0) for o in prod_outflows)
+    total_cash_outflow = sum(float(o.amount or 0) for o in cash_outflows)
+
+    out_user_ids = list({o.created_by for o in outflows if o.created_by})
+    out_users_map = {}
+    if out_user_ids:
+        out_users = db.query(UserModel).filter(UserModel.id.in_(out_user_ids)).all()
+        out_users_map = {u.id: (u.name or u.username or str(u.id)) for u in out_users}
+
+    # Consolidados
+    comb_cash = sales_cash + svc_cash
+    comb_mpesa = sales_mpesa + svc_mpesa
+    comb_skywallet = sales_skywallet + svc_skywallet
+    comb_card = sales_card + svc_card
+    comb_mixed = sales_mixed + svc_other
+    grand_revenue = comb_cash + comb_mpesa + comb_skywallet + comb_card + comb_mixed
+    net_cash_balance = comb_cash - total_cash_outflow
+    net_grand_balance = grand_revenue - total_cash_outflow
+
+    # ── Criar Workbook ────────────────────────────────────────
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Resumo de Vendas"
 
-    cash_total = summary.get("cash_sales") or 0
-    card_total = summary.get("card_sales") or 0
-    skywallet_total = summary.get("skywallet_sales") or 0
-    mpesa_total = summary.get("mpesa_sales") or 0
-    mixed_total = summary.get("mixed_sales") or 0
-    total_payments = cash_total + card_total + skywallet_total + mpesa_total + mixed_total
-
-    rows = [
-        ("Periodo Inicio", start_date.strftime("%d/%m/%Y %H:%M")),
-        ("Periodo Fim", end_date.strftime("%d/%m/%Y %H:%M")),
-        ("Total Vendas", summary["total_sales"]),
-        ("Receita Bruta", summary["total_revenue"]),
-        ("Custo Total", summary["total_cost"]),
-        ("Lucro Bruto", summary["gross_profit"]),
-        ("Ticket Médio", summary["average_sale_value"]),
+    # Planilha 1: Resumo Geral
+    ws_summary = wb.active
+    ws_summary.title = "Resumo Geral"
+    summary_rows = [
+        ("Terminal", terminal.name or "SkyPDV"),
+        ("Período Início", start_date.strftime("%d/%m/%Y %H:%M")),
+        ("Período Fim", end_date.strftime("%d/%m/%Y %H:%M")),
+        ("Moeda", currency),
+        ("", ""),
+        ("--- INDICADORES PRINCIPAIS ---", ""),
+        ("Receita Vendas de Produtos", float(summary.get("total_revenue") or 0)),
+        ("Receita Serviços Prestados", total_service_rev),
+        ("TOTAL ARRECADADO BRUTO", grand_revenue),
+        ("Total Saídas Dinheiro (Despesas)", total_cash_outflow),
+        ("SALDO FINAL EM CAIXA (Dinheiro)", net_cash_balance),
+        ("RESULTADO GLOBAL LÍQUIDO", net_grand_balance),
+        ("", ""),
+        ("--- DETALHE DE VENDAS ---", ""),
+        ("Total Transacções de Venda", summary["total_sales"]),
         ("Itens Vendidos", summary["total_items_sold"]),
-        ("Descontos", summary["total_discounts"]),
-        ("Impostos", summary["total_taxes"]),
-        ("Vendas Cash", cash_total),
-        ("Vendas M-pesa", mpesa_total),
-        ("Vendas E-Mola", skywallet_total),
-        ("Vendas BCI POS", card_total),
-        ("Vendas Misto", mixed_total),
-        ("Total pagamentos", total_payments),
+        ("Ticket Médio", float(summary.get("average_sale_value") or 0)),
+        ("Custo Total Estimado", float(summary.get("total_cost") or 0)),
+        ("Lucro Bruto Estimado", float(summary.get("gross_profit") or 0)),
+        ("Descontos Concedidos", float(summary.get("total_discounts") or 0)),
+        ("Impostos", float(summary.get("total_taxes") or 0)),
         ("Vendas Anuladas", summary["voided_sales"]),
-        ("Valor Anulado", summary["voided_amount"]),
+        ("Valor Anulado", float(summary.get("voided_amount") or 0)),
+        ("", ""),
+        ("--- DETALHE DE SERVIÇOS ---", ""),
+        ("Ordens de Serviço Concluídas", len(service_orders)),
+        ("Receita de Serviços", total_service_rev),
+        ("", ""),
+        ("--- DETALHE DE SAÍDAS ---", ""),
+        ("Saídas de Produtos (Qtd)", total_prod_outflow_qty),
+        ("Despesas de Caixa (Valor)", total_cash_outflow),
     ]
+    ws_summary.append(["Métrica / Rubrica", "Valor"])
+    for name, value in summary_rows:
+        ws_summary.append([name, value])
 
-    ws.append(["Métrica", "Valor"])
-    def _has_value(v) -> bool:
-        try:
-            return float(v) != 0.0
-        except Exception:
-            return bool(v)
-
-    payment_row_names = {
-        "Vendas Cash",
-        "Vendas M-pesa",
-        "Vendas E-Mola",
-        "Vendas BCI POS",
-        "Vendas Misto",
-    }
-    payment_rows = [
-        ("Vendas Cash", cash_total),
-        ("Vendas M-pesa", mpesa_total),
-        ("Vendas E-Mola", skywallet_total),
-        ("Vendas BCI POS", card_total),
-        ("Vendas Misto", mixed_total),
+    # Planilha 2: Meios de Pagamento Consolidados
+    ws_pay = wb.create_sheet("Meios de Pagamento")
+    ws_pay.append(["Método de Pagamento", "Vendas Produtos", "Serviços Prestados", "TOTAL ARRECADADO", "% Geral"])
+    pay_table_data = [
+        ("Dinheiro (Cash)", sales_cash, svc_cash, comb_cash),
+        ("M-Pesa", sales_mpesa, svc_mpesa, comb_mpesa),
+        ("E-Mola / SkyWallet", sales_skywallet, svc_skywallet, comb_skywallet),
+        ("BCI POS / Cartão", sales_card, svc_card, comb_card),
+        ("Misto / Outros", sales_mixed, svc_other, comb_mixed),
     ]
-    visible_payments = [(name, total) for name, total in payment_rows if _has_value(total)]
-    cleaned_rows = []
-    for name, value in rows:
-        if name in payment_row_names:
-            continue
-        if name == "Total pagamentos":
-            if not visible_payments:
-                cleaned_rows.append(("Sem pagamentos", 0))
-            else:
-                cleaned_rows.extend(visible_payments)
-            cleaned_rows.append((name, value))
-            continue
-        cleaned_rows.append((name, value))
-    rows = cleaned_rows
+    for m, vp, vs, vt in pay_table_data:
+        pct = (vt / grand_revenue * 100) if grand_revenue > 0 else 0.0
+        ws_pay.append([m, vp, vs, vt, f"{pct:.1f}%"])
+    ws_pay.append(["TOTAL GERAL", total_sales_pay, total_service_rev, grand_revenue, "100.0%"])
 
-    for name, value in rows:
-        ws.append([name, value])
-
-    # Removed Excel product movement summaries per request (keeping only the main summary and product sold list)
-
-    # Add sheet with Produtos Vendidos (mirrors PDF table)
+    # Planilha 3: Produtos Vendidos
     ws_products = wb.create_sheet("Produtos Vendidos")
-    ws_products.append(["Produto", "vendida", "inicial", "Entradas", "Saidas", "Total mov."])
+    ws_products.append(["Produto", "Qtd Vendida", "Stock Inicial", "Entradas", "Saídas", "Preço Unit.", "Receita Total"])
 
     sold_products_query = (
         db.query(
@@ -2081,10 +2435,7 @@ def get_sales_report_excel(
         )
         .join(PDVSale, PDVSale.id == PDVSaleItem.sale_id)
         .join(PDVProduct, PDVProduct.id == PDVSaleItem.product_id)
-        .outerjoin(
-            PDVInventory,
-            (PDVInventory.product_id == PDVProduct.id) & (PDVInventory.terminal_id == terminal.id),
-        )
+        .outerjoin(PDVInventory, (PDVInventory.product_id == PDVProduct.id) & (PDVInventory.terminal_id == terminal.id))
         .filter(PDVSale.terminal_id == terminal.id)
         .filter(PDVSale.created_at >= start_date)
         .filter(PDVSale.created_at <= end_date)
@@ -2131,43 +2482,87 @@ def get_sales_report_excel(
         exits = float(movement_stats.get("exits", 0) or 0)
         current_stock = float(product.stock or 0)
         initial_stock = current_stock - (entries - exits)
-        total_mov_value = price * qty_sold
+        rev = price * qty_sold
         ws_products.append([
             str(product.name or ""),
-            int(qty_sold),
-            int(initial_stock),
-            int(entries),
-            int(exits),
-            float(total_mov_value),
+            float(qty_sold),
+            float(initial_stock),
+            float(entries),
+            float(exits),
+            float(price),
+            float(rev),
         ])
 
-    # Auto ajuste de largura para a planilha de produtos vendidos
-    for col_idx in range(1, 7):
-        col_letter = get_column_letter(col_idx)
-        max_length = 0
-        for cell in ws_products[col_letter]:
-            try:
-                max_length = max(max_length, len(str(cell.value)))
-            except Exception:
-                pass
-        ws_products.column_dimensions[col_letter].width = max_length + 2
+    # Planilha 4: Serviços Prestados
+    ws_services = wb.create_sheet("Serviços Prestados")
+    ws_services.append(["Recibo / ID", "Data / Hora", "Serviço", "Cliente", "Qtd", "Método Pagamento", "Total"])
+    for so in service_orders:
+        rec = str(so.receipt_number or f"#{so.id}")
+        c_name = str(so.customer_name or "Balcão")
+        ws_services.append([
+            rec,
+            so.created_at.strftime("%d/%m/%Y %H:%M") if so.created_at else "",
+            str(so.service_name or ""),
+            c_name,
+            float(so.quantity or 1),
+            _pm_str(so.payment_method).capitalize(),
+            float(so.total or 0),
+        ])
+
+    # Planilha 5: Saídas Registadas
+    ws_outflows = wb.create_sheet("Saídas Registadas")
+    ws_outflows.append(["ID", "Data / Hora", "Tipo", "Motivo", "Item / Descrição", "Destino", "Operador", "Qtd", "Valor"])
+    REASON_LABELS = {
+        "consumo_interno": "Consumo interno",
+        "cafetaria": "Cafetaria",
+        "cozinha": "Cozinha",
+        "perda": "Perda / Avaria",
+        "despesa_diaria": "Despesa diária",
+        "outro": "Outro",
+    }
+    for o in outflows:
+        is_p = _is_prod_outflow(o)
+        tipo = "Produto" if is_p else "Dinheiro"
+        motivo = REASON_LABELS.get(o.reason or "", o.reason or "—")
+        item = o.product.name if (o.product and o.product.name) else (o.title or "—")
+        operador = out_users_map.get(o.created_by, "—") if o.created_by else "—"
+        ws_outflows.append([
+            f"#{o.id}",
+            o.created_at.strftime("%d/%m/%Y %H:%M") if o.created_at else "",
+            tipo,
+            motivo,
+            item,
+            o.destination or "—",
+            operador,
+            float(o.quantity or 0) if is_p else 0,
+            float(o.amount or 0) if not is_p else 0,
+        ])
+
+    # Auto ajuste de colunas em todas as planilhas
+    for sheet in wb.worksheets:
+        for col in sheet.columns:
+            col_letter = get_column_letter(col[0].column)
+            max_len = max(len(str(c.value or "")) for c in col)
+            sheet.column_dimensions[col_letter].width = max(max_len + 3, 10)
 
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
 
-    filename = f"sales-summary-{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}.xlsx"
+    filename = f"Relatorio_Geral_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx"
     headers = {
         "Content-Disposition": f'attachment; filename="{filename}"',
         "Access-Control-Expose-Headers": "Content-Disposition",
     }
 
     if phone:
-        caption = f"Relatório de vendas (Excel) {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')} (SkyPDV)."
+        caption = f"Relatório Geral SkyPDV (Excel) {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}."
         send_whatsapp_file(phone, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer.getvalue(), caption=caption)
         send_whatsapp_text(phone, caption)
 
     return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
+
+
 @router.get("/reports/products.pdf")
 def get_products_report_pdf(
     db: Session = Depends(get_db),
