@@ -2972,10 +2972,36 @@ def export_service_orders_pdf(
     story = []
     page_w = A4[0] - 56  # usable width
 
+    # --- Dados da Empresa/Terminal (dinâmicos por conta/terminal) ---
+    t_settings = terminal.settings if isinstance(terminal.settings, dict) else {}
+    company_name = (
+        t_settings.get("receipt_company_name")
+        or terminal.name
+        or "SkyPDV"
+    )
+    company_address = (
+        t_settings.get("receipt_address")
+        or terminal.address
+        or ""
+    )
+    company_contacts = (
+        t_settings.get("receipt_contacts")
+        or terminal.phone
+        or ""
+    )
+    company_nuit = t_settings.get("receipt_nuit") or ""
+
     # --- Cabeçalho ---
-    story.append(Paragraph(terminal.name or "SkyPDV", style_title))
-    if terminal.address:
-        story.append(Paragraph(terminal.address, style_subtitle))
+    story.append(Paragraph(company_name, style_title))
+    if company_address:
+        story.append(Paragraph(company_address, style_subtitle))
+    if company_contacts or company_nuit:
+        extra_info = []
+        if company_contacts:
+            extra_info.append(f"Contacto: {company_contacts}")
+        if company_nuit:
+            extra_info.append(f"NUIT: {company_nuit}")
+        story.append(Paragraph(" · ".join(extra_info), style_subtitle))
     story.append(Spacer(1, 4))
     story.append(Paragraph("Relatório de Serviços Prestados", style_subtitle))
     story.append(Paragraph(f"Período: {period_label_str}", style_subtitle))
@@ -3120,7 +3146,7 @@ def export_service_orders_pdf(
     ))
     story.append(Spacer(1, 4))
     story.append(Paragraph(
-        f"SkyPDV · Gerado em {fmt_dt(now)} · {terminal.name or ''}",
+        f"SkyPDV · Gerado em {fmt_dt(now)} · {company_name}",
         ParagraphStyle("footer", parent=style_small, alignment=TA_CENTER),
     ))
 
