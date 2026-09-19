@@ -2726,7 +2726,7 @@ def create_service_order(
 @router.get("/service-orders", response_model=List[schemas.PDVServiceOrderResponse])
 def get_service_orders(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=2000),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     service_id: Optional[int] = None,
