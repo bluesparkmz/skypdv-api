@@ -2778,6 +2778,7 @@ def get_service_order(
 # PDF export — Service Orders
 # ---------------------------------------------------------------------------
 
+@router.get("/reports/service-orders.pdf")
 @router.get("/service-orders/pdf/export")
 def export_service_orders_pdf(
     period: Optional[str] = Query(None, description="today | week | month | all"),
