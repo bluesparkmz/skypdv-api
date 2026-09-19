@@ -1488,19 +1488,15 @@ def get_sales_report_pdf(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Relatório Geral do Sistema:
-    - Vendas de Produtos (métricas globais, métodos de pagamento e produtos vendidos)
-    - Serviços Prestados (detalhe de ordens e resumo por serviço)
-    - Totais Consolidados por Meio de Pagamento (Dinheiro, M-Pesa, E-Mola, POS, Misto)
-    - Saídas (produtos retirados e despesas de caixa)
-    - Fecho Financeiro e Balanço de Caixa
+    Relatório geral: tabela de vendas, totais por pagamento em texto,
+    tabela de serviços, totais por pagamento em texto, e tabela de saídas.
     """
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import mm
-    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, HRFlowable, KeepTogether
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, HRFlowable
     from xml.sax.saxutils import escape as _esc
     from models import PDVServiceOrder, PDVOutflow as PDVOutflowModel, User as UserModel
 
@@ -1742,29 +1738,48 @@ def get_sales_report_pdf(
     company_contacts = t_settings.get("receipt_contacts") or terminal.phone or ""
     company_nuit = t_settings.get("receipt_nuit") or ""
 
-    # ── ReportLab Setup & Styles ──────────────────────────────
-    C_ORANGE  = colors.HexColor("#F97316")
-    C_BLUE    = colors.HexColor("#2563EB")
-    C_GREEN   = colors.HexColor("#059669")
-    C_RED     = colors.HexColor("#DC2626")
-    C_DARK    = colors.HexColor("#1E1E2E")
-    C_LGRAY   = colors.HexColor("#F8FAFC")
-    C_MGRAY   = colors.HexColor("#94A3B8")
-    C_BGRAY   = colors.HexColor("#E2E8F0")
-    C_WHITE   = colors.white
-    C_AMBER   = colors.HexColor("#FEF3C7")
-    C_DARK_HDR= colors.HexColor("#0F172A")
+    # ── ReportLab Setup & Styles (preto / claro) ──────────────
+    C_BLACK  = colors.HexColor("#111111")
+    C_TEXT   = colors.HexColor("#222222")
+    C_MUTED  = colors.HexColor("#555555")
+    C_LINE   = colors.HexColor("#CCCCCC")
+    C_HEADER = colors.HexColor("#111111")
+    C_ROW    = colors.HexColor("#F5F5F5")
+    C_WHITE  = colors.white
 
     styles = getSampleStyleSheet()
-    ST_TITLE = ParagraphStyle("RTitle", parent=styles["Title"], fontSize=18, leading=22, textColor=C_DARK, alignment=TA_LEFT)
-    ST_SUB   = ParagraphStyle("RSub",   parent=styles["Normal"], fontSize=8, leading=11, textColor=C_MGRAY)
-    ST_H2    = ParagraphStyle("RH2",    parent=styles["Heading2"], fontSize=11, leading=14, textColor=C_DARK, spaceBefore=12, spaceAfter=4)
-    ST_H3    = ParagraphStyle("RH3",    parent=styles["Heading3"], fontSize=9, leading=12, textColor=C_DARK, spaceBefore=8, spaceAfter=3)
-    ST_CELL  = ParagraphStyle("RCell",  parent=styles["Normal"], fontSize=7.5, leading=9.5)
-    ST_CELL_R= ParagraphStyle("RCellR", parent=styles["Normal"], fontSize=7.5, leading=9.5, alignment=TA_RIGHT)
-    ST_CELL_B= ParagraphStyle("RCellB", parent=styles["Normal"], fontSize=7.5, leading=9.5, fontName="Helvetica-Bold")
-    ST_CELL_BR= ParagraphStyle("RCellBR", parent=styles["Normal"], fontSize=7.5, leading=9.5, fontName="Helvetica-Bold", alignment=TA_RIGHT)
-    ST_FOOT  = ParagraphStyle("RFoot",  parent=styles["Normal"], fontSize=7, textColor=C_MGRAY, alignment=TA_CENTER)
+    ST_TITLE = ParagraphStyle("RTitle", parent=styles["Title"], fontSize=16, leading=20, textColor=C_BLACK, alignment=TA_LEFT, spaceAfter=2)
+    ST_SUB   = ParagraphStyle("RSub",   parent=styles["Normal"], fontSize=8.5, leading=12, textColor=C_MUTED)
+    ST_H2    = ParagraphStyle("RH2",    parent=styles["Heading2"], fontSize=11, leading=14, textColor=C_BLACK, spaceBefore=14, spaceAfter=6, fontName="Helvetica-Bold")
+    ST_BODY  = ParagraphStyle("RBody",  parent=styles["Normal"], fontSize=9, leading=13, textColor=C_TEXT, spaceBefore=1, spaceAfter=1)
+    ST_BODY_B= ParagraphStyle("RBodyB", parent=styles["Normal"], fontSize=9.5, leading=13.5, textColor=C_BLACK, spaceBefore=2, spaceAfter=2, fontName="Helvetica-Bold")
+    ST_CELL  = ParagraphStyle("RCell",  parent=styles["Normal"], fontSize=8, leading=10.5, textColor=C_TEXT)
+    ST_FOOT  = ParagraphStyle("RFoot",  parent=styles["Normal"], fontSize=7.5, textColor=C_MUTED, alignment=TA_CENTER)
+
+    def _list_table_style(align_from_col=1):
+        return TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), C_HEADER),
+            ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
+            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0, 0), (-1, -1), 8),
+            ("TEXTCOLOR",  (0, 1), (-1, -1), C_TEXT),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, C_ROW]),
+            ("ALIGN",      (align_from_col, 0), (-1, -1), "RIGHT"),
+            ("ALIGN",      (0, 0), (0, -1), "LEFT"),
+            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
+            ("BOX",       (0, 0), (-1, -1), 0.4, C_LINE),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, C_LINE),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.6, C_BLACK),
+        ])
+
+    def _append_payment_totals(total_label, total_val, methods):
+        story.append(Paragraph(f"{total_label}: {_fmt_cur(total_val)}", ST_BODY_B))
+        for name, val in methods:
+            story.append(Paragraph(f"{name}: {_fmt_cur(val)}", ST_BODY))
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -1776,9 +1791,9 @@ def get_sales_report_pdf(
     w_usable = doc.width
 
     # ─────────────────────────────────────────────────────────
-    # CABEÇALHO EXECUTIVO
+    # CABEÇALHO
     # ─────────────────────────────────────────────────────────
-    story.append(Paragraph(f"<b>{_esc(company_name)}</b>", ST_TITLE))
+    story.append(Paragraph(_esc(company_name), ST_TITLE))
     header_meta = []
     if company_address:
         header_meta.append(_esc(company_address))
@@ -1788,224 +1803,73 @@ def get_sales_report_pdf(
         header_meta.append(f"NUIT: {_esc(company_nuit)}")
     if header_meta:
         story.append(Paragraph(" · ".join(header_meta), ST_SUB))
-    story.append(Spacer(1, 3))
-    story.append(HRFlowable(width="100%", thickness=2, color=C_ORANGE, spaceAfter=6))
+    story.append(Spacer(1, 4))
+    story.append(HRFlowable(width="100%", thickness=1, color=C_BLACK, spaceAfter=8))
 
     scope_label = "Apenas bebidas" if product_scope == "beverages" else "Todos os produtos"
-    story.append(Paragraph("<b>RELATÓRIO GERAL DO SISTEMA</b>", ST_H2))
+    story.append(Paragraph("Relatório geral", ST_H2))
     story.append(Paragraph(
-        f"<b>Período:</b> {period_label} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Escopo:</b> {scope_label} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Emitido:</b> {_fmt_dt(issued_at)} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Terminal:</b> {_esc(terminal.name or '')}",
+        f"Período: {period_label}    ·    Escopo: {scope_label}    ·    Emitido: {_fmt_dt(issued_at)}    ·    Terminal: {_esc(terminal.name or '')}",
         ST_SUB
     ))
-    story.append(Spacer(1, 8))
 
-    # ─────────────────────────────────────────────────────────
-    # PAINEL DE INDICADORES GERAIS (KPIs)
-    # ─────────────────────────────────────────────────────────
-    kpi_headers = [
-        Paragraph("<b>1. Vendas Produtos</b>", ST_CELL),
-        Paragraph("<b>2. Serviços Prestados</b>", ST_CELL),
-        Paragraph("<b>3. Total Arrecadado</b>", ST_CELL),
-        Paragraph("<b>4. Despesas Caixa</b>", ST_CELL),
-        Paragraph("<b>5. Balanço Líquido</b>", ST_CELL),
-    ]
-    kpi_values = [
-        Paragraph(f"<font size='11'><b>{_fmt_money(total_product_revenue)}</b></font><br/>{currency}", ST_CELL),
-        Paragraph(f"<font size='11'><b>{_fmt_money(total_service_revenue)}</b></font><br/>{currency}", ST_CELL),
-        Paragraph(f"<font size='11'><b>{_fmt_money(grand_total_revenue)}</b></font><br/>{currency}", ST_CELL),
-        Paragraph(f"<font size='11'><b>{_fmt_money(total_cash_outflow)}</b></font><br/>{currency}", ST_CELL),
-        Paragraph(f"<font size='11'><b>{_fmt_money(net_grand_balance)}</b></font><br/>{currency}", ST_CELL),
-    ]
-    kpi_sub = [
-        Paragraph(f"{len(sold_products)} itens ({_fmt_int(total_product_units)} un.)", ST_CELL),
-        Paragraph(f"{len(service_orders)} ordens concl.", ST_CELL),
-        Paragraph("Vendas + Serviços", ST_CELL),
-        Paragraph(f"{len(cash_outflows)} despesa(s)", ST_CELL),
-        Paragraph("Arrecadado − Despesas", ST_CELL),
-    ]
-    cw_kpi = w_usable / 5.0
-    kpi_tbl = Table([kpi_headers, kpi_values, kpi_sub], colWidths=[cw_kpi]*5)
-    kpi_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), C_DARK_HDR),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
-        ("BACKGROUND", (0, 1), (-1, 2), C_WHITE),
-        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
-        ("INNERGRID",  (0, 0), (-1, -1), 0.3, C_BGRAY),
-        ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("TEXTCOLOR",  (0, 1), (0, 1), C_BLUE),
-        ("TEXTCOLOR",  (1, 1), (1, 1), C_GREEN),
-        ("TEXTCOLOR",  (2, 1), (2, 1), C_DARK),
-        ("TEXTCOLOR",  (3, 1), (3, 1), C_RED),
-        ("TEXTCOLOR",  (4, 1), (4, 1), C_GREEN if net_grand_balance >= 0 else C_RED),
-    ]))
-    story.append(kpi_tbl)
-    story.append(Spacer(1, 10))
-
-    # ─────────────────────────────────────────────────────────
-    # SECÇÃO 1 — RESUMO E VENDAS DE PRODUTOS
-    # ─────────────────────────────────────────────────────────
-    story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
-    story.append(Paragraph("1. Vendas de Produtos", ST_H2))
-
-    # 1.1 Métricas Gerais de Vendas
-    cost_val = float(summary.get("total_cost") or 0)
-    profit_val = float(summary.get("gross_profit") or 0)
-    avg_val = float(summary.get("average_sale_value") or 0)
-    disc_val = float(summary.get("total_discounts") or 0)
-    tax_val = float(summary.get("total_taxes") or 0)
-
-    sales_metrics_data = [
-        [
-            Paragraph("<b>Total Vendas</b>", ST_CELL),
-            Paragraph("<b>Itens Vendidos</b>", ST_CELL),
-            Paragraph("<b>Ticket Médio</b>", ST_CELL),
-            Paragraph("<b>Custo Mercadoria</b>", ST_CELL),
-            Paragraph("<b>Lucro Bruto Est.</b>", ST_CELL),
-            Paragraph("<b>Descontos</b>", ST_CELL),
-            Paragraph("<b>Impostos</b>", ST_CELL),
-        ],
-        [
-            Paragraph(f"<b>{summary.get('total_sales', 0)}</b>", ST_CELL),
-            Paragraph(f"<b>{_fmt_int(summary.get('total_items_sold', 0))}</b>", ST_CELL),
-            Paragraph(f"<b>{_fmt_cur(avg_val)}</b>", ST_CELL),
-            Paragraph(f"<b>{_fmt_cur(cost_val)}</b>", ST_CELL),
-            Paragraph(f"<b>{_fmt_cur(profit_val)}</b>", ST_CELL),
-            Paragraph(f"<b>{_fmt_cur(disc_val)}</b>", ST_CELL),
-            Paragraph(f"<b>{_fmt_cur(tax_val)}</b>", ST_CELL),
-        ]
-    ]
-    cw_sm = w_usable / 7.0
-    sales_metrics_tbl = Table(sales_metrics_data, colWidths=[cw_sm]*7)
-    sales_metrics_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), C_LGRAY),
-        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
-        ("INNERGRID",  (0, 0), (-1, -1), 0.3, C_BGRAY),
-        ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("FONTSIZE",   (0, 0), (-1, -1), 7),
-    ]))
-    story.append(sales_metrics_tbl)
-    story.append(Spacer(1, 6))
-
-    # 1.2 Pagamentos das Vendas de Produtos
-    story.append(Paragraph("<b>Meios de Pagamento — Vendas de Produtos</b>", ST_H3))
-    sales_pay_rows = [
-        ("Dinheiro (Cash)", sales_cash),
+    PAY_SALES = [
+        ("Dinheiro", sales_cash),
         ("M-Pesa", sales_mpesa),
         ("E-Mola / SkyWallet", sales_skywallet),
-        ("BCI POS / Cartão", sales_card),
+        ("POS / Cartão", sales_card),
         ("Misto", sales_mixed),
     ]
-    visible_sales_pay = [(n, v) for n, v in sales_pay_rows if _has_val(v)]
-    sp_data = [["Método de Pagamento", "Total Vendas", "% do Total de Vendas"]]
-    if not visible_sales_pay:
-        sp_data.append(["Sem pagamentos registados", _fmt_cur(0), "0.0%"])
-    else:
-        for name, val in visible_sales_pay:
-            pct = (val / sales_pay_total * 100) if sales_pay_total > 0 else 0.0
-            sp_data.append([name, _fmt_cur(val), f"{pct:.1f}%"])
-    sp_data.append(["TOTAL VENDAS DE PRODUTOS", _fmt_cur(sales_pay_total), "100.0%"])
+    PAY_SERVICES = [
+        ("Dinheiro", svc_cash),
+        ("M-Pesa", svc_mpesa),
+        ("E-Mola / SkyWallet", svc_skywallet),
+        ("POS / Cartão", svc_card),
+        ("Outros", svc_other),
+    ]
 
-    sp_tbl = Table(sp_data, colWidths=[w_usable * 0.50, w_usable * 0.30, w_usable * 0.20])
-    sp_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), C_BLUE),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
-        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, -1), 7.5),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
-        ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
-        ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("ALIGN",      (1, 0), (-1, -1), "RIGHT"),
-        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
-        ("INNERGRID",  (0, 0), (-1, -1), 0.25, C_BGRAY),
-        ("TOPPADDING",    (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
-    ]))
-    story.append(sp_tbl)
-    story.append(Spacer(1, 8))
+    # ─────────────────────────────────────────────────────────
+    # 1. VENDAS
+    # ─────────────────────────────────────────────────────────
+    story.append(Paragraph("Vendas", ST_H2))
 
-    # 1.3 Tabela Detalhada de Produtos Vendidos
-    story.append(Paragraph("<b>Lista de Produtos Vendidos no Período</b>", ST_H3))
-    prod_headers = ["Produto", "Qtd Vendida", "Stk Inicial", "Entradas", "Saídas", "Preço Unit.", "Receita Total"]
-    prod_col_w_raw = [170, 52, 50, 48, 48, 60, 72]
-    scale_p = w_usable / sum(prod_col_w_raw)
-    prod_col_w = [w * scale_p for w in prod_col_w_raw]
-
+    prod_headers = ["Produto", "Qtd", "Preço unit.", "Total"]
+    prod_col_w = [w_usable * 0.50, w_usable * 0.12, w_usable * 0.19, w_usable * 0.19]
     prod_table_data = [prod_headers]
     for product in sold_products:
         qty_sold = float(product.qty or 0)
         if qty_sold <= 0:
             continue
         price = float(getattr(product, "price", 0) or 0)
-        mvs = movement_by_product.get(product.product_id, {"entries": 0, "exits": 0})
-        entries = float(mvs.get("entries", 0) or 0)
-        exits   = float(mvs.get("exits", 0) or 0)
-        current_stock = float(product.stock or 0)
-        initial_stock = current_stock - (entries - exits)
-        rev = price * qty_sold
         prod_table_data.append([
             Paragraph(_esc(str(product.name or "")), ST_CELL),
             _fmt_int(qty_sold),
-            _fmt_int(initial_stock),
-            _fmt_int(entries),
-            _fmt_int(exits),
             _fmt_money(price),
-            _fmt_money(rev),
+            _fmt_money(price * qty_sold),
         ])
     if len(prod_table_data) == 1:
-        prod_table_data.append(["Sem produtos vendidos no período", "—", "—", "—", "—", "—", "—"])
-    else:
-        prod_table_data.append(["TOTAL", _fmt_int(total_product_units), "", "", "", "", _fmt_cur(total_product_revenue)])
+        prod_table_data.append(["Sem vendas no período", "—", "—", "—"])
 
     prod_tbl = Table(prod_table_data, colWidths=prod_col_w, repeatRows=1)
-    prod_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), C_BLUE),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
-        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, -1), 7),
-        ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
-        ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
-        ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("ALIGN",      (1, 1), (-1, -1), "RIGHT"),
-        ("ALIGN",      (0, -1), (0, -1), "LEFT"),
-        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
-        ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
-        ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
-    ]))
+    prod_tbl.setStyle(_list_table_style(1))
     story.append(prod_tbl)
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 8))
+    _append_payment_totals("Total de vendas", sales_pay_total, PAY_SALES)
 
     # ─────────────────────────────────────────────────────────
-    # SECÇÃO 2 — SERVIÇOS PRESTADOS
+    # 2. SERVIÇOS
     # ─────────────────────────────────────────────────────────
-    story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
-    story.append(Paragraph("2. Serviços Prestados", ST_H2))
+    story.append(Paragraph("Serviços", ST_H2))
 
-    # 2.1 Detalhe de Ordens de Serviços
-    svc_detail_headers = ["Recibo/ID", "Data / Hora", "Serviço", "Cliente", "Qtd", "Método", "Total"]
-    svc_detail_cw_raw = [38, 48, 140, 90, 26, 48, 60]
-    scale_sd = w_usable / sum(svc_detail_cw_raw)
-    svc_detail_cw = [w * scale_sd for w in svc_detail_cw_raw]
-
-    svc_detail_data = [svc_detail_headers]
+    svc_headers = ["Data", "Serviço", "Cliente", "Qtd", "Método", "Total"]
+    svc_cw_raw = [78, 150, 95, 32, 70, 70]
+    scale_sd = w_usable / sum(svc_cw_raw)
+    svc_cw = [w * scale_sd for w in svc_cw_raw]
+    svc_detail_data = [svc_headers]
     for so in service_orders:
-        rec_id = str(so.receipt_number or f"#{so.id}")
         c_name = str(so.customer_name or "Balcão")
-        pm_display = _pm_str(so.payment_method).capitalize()
+        pm_display = _pm_str(so.payment_method).replace("_", " ").capitalize()
         svc_detail_data.append([
-            rec_id,
             _fmt_dt(so.created_at),
             Paragraph(_esc(str(so.service_name or "")), ST_CELL),
             Paragraph(_esc(c_name), ST_CELL),
@@ -2014,352 +1878,61 @@ def get_sales_report_pdf(
             _fmt_money(so.total or 0),
         ])
     if len(svc_detail_data) == 1:
-        svc_detail_data.append(["—", "Sem serviços prestados no período", "—", "—", "—", "—", "—"])
-    else:
-        svc_detail_data.append(["TOTAL", "", "", f"{len(service_orders)} ordens", "", "", _fmt_cur(total_service_revenue)])
+        svc_detail_data.append(["Sem serviços no período", "—", "—", "—", "—", "—"])
 
-    svc_detail_tbl = Table(svc_detail_data, colWidths=svc_detail_cw, repeatRows=1)
-    svc_detail_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), C_GREEN),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
-        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, -1), 7),
-        ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
-        ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
-        ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("ALIGN",      (4, 1), (-1, -1), "RIGHT"),
-        ("ALIGN",      (0, -1), (2, -1), "LEFT"),
-        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
-        ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
-        ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
-    ]))
-    story.append(svc_detail_tbl)
-    story.append(Spacer(1, 6))
-
-    # 2.2 Resumo por Tipo de Serviço
-    if svc_by_name:
-        story.append(Paragraph("<b>Resumo por Tipo de Serviço</b>", ST_H3))
-        svc_sum_headers = ["Serviço", "N.º Ordens", "Qtd Prestada", "Receita Total", "% dos Serviços"]
-        svc_sum_cw = [w_usable * 0.40, w_usable * 0.15, w_usable * 0.15, w_usable * 0.18, w_usable * 0.12]
-        svc_sum_data = [svc_sum_headers]
-        for name, stats in sorted(svc_by_name.items(), key=lambda x: -x[1]["total"]):
-            pct_s = (stats["total"] / total_service_revenue * 100) if total_service_revenue > 0 else 0.0
-            svc_sum_data.append([
-                Paragraph(_esc(name), ST_CELL),
-                str(stats["count"]),
-                _fmt_int(stats["qty"]),
-                _fmt_cur(stats["total"]),
-                f"{pct_s:.1f}%",
-            ])
-        svc_sum_data.append(["TOTAL", str(len(service_orders)), "", _fmt_cur(total_service_revenue), "100.0%"])
-
-        svc_sum_tbl = Table(svc_sum_data, colWidths=svc_sum_cw, repeatRows=1)
-        svc_sum_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), C_LGRAY),
-            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE",   (0, 0), (-1, -1), 7),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
-            ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
-            ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("ALIGN",      (1, 0), (-1, -1), "RIGHT"),
-            ("ALIGN",      (0, -1), (0, -1), "LEFT"),
-            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING",    (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
-            ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
-        ]))
-        story.append(svc_sum_tbl)
-        story.append(Spacer(1, 10))
+    svc_tbl = Table(svc_detail_data, colWidths=svc_cw, repeatRows=1)
+    svc_tbl.setStyle(_list_table_style(3))
+    story.append(svc_tbl)
+    story.append(Spacer(1, 8))
+    _append_payment_totals("Total de serviços", total_service_revenue, PAY_SERVICES)
 
     # ─────────────────────────────────────────────────────────
-    # SECÇÃO 3 — CONSOLIDAÇÃO GERAL POR MEIO DE PAGAMENTO
+    # 3. SAÍDAS
     # ─────────────────────────────────────────────────────────
-    story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
-    story.append(Paragraph("3. Total Geral Consolidado por Meio de Pagamento", ST_H2))
-    story.append(Paragraph(
-        "Total arrecadado agrupando <b>Vendas de Produtos</b> e <b>Serviços Prestados</b>:",
-        ST_SUB
-    ))
-    story.append(Spacer(1, 4))
+    story.append(Paragraph("Saídas", ST_H2))
 
-    comb_pay_headers = ["Método de Pagamento", "Vendas Produtos", "Serviços Prestados", "TOTAL ARRECADADO", "% Geral"]
-    comb_cw = [w_usable * 0.32, w_usable * 0.20, w_usable * 0.20, w_usable * 0.18, w_usable * 0.10]
-    comb_rows = [
-        ("Dinheiro (Cash)",        sales_cash,      svc_cash,      comb_cash),
-        ("M-Pesa",                 sales_mpesa,     svc_mpesa,     comb_mpesa),
-        ("E-Mola / SkyWallet",     sales_skywallet, svc_skywallet, comb_skywallet),
-        ("BCI POS / Cartão",       sales_card,      svc_card,      comb_card),
-        ("Misto / Outros",         sales_mixed,     svc_other,     comb_mixed),
-    ]
-    comb_table_data = [comb_pay_headers]
-    for m_name, v_prod, v_svc, v_tot in comb_rows:
-        pct_g = (v_tot / grand_total_revenue * 100) if grand_total_revenue > 0 else 0.0
-        comb_table_data.append([
-            m_name,
-            _fmt_cur(v_prod),
-            _fmt_cur(v_svc),
-            _fmt_cur(v_tot),
-            f"{pct_g:.1f}%",
+    out_headers = ["Data", "Tipo", "Descrição", "Motivo", "Destino", "Qtd", "Valor", "Operador"]
+    out_cw_raw = [70, 52, 120, 70, 70, 32, 62, 70]
+    scale_out = w_usable / sum(out_cw_raw)
+    out_cw = [w * scale_out for w in out_cw_raw]
+    out_rows = [out_headers]
+    for o in outflows:
+        is_prod = _is_prod_outflow(o)
+        tipo = "Produto" if is_prod else "Caixa"
+        desc = ""
+        if is_prod and o.product and o.product.name:
+            desc = o.product.name
+        else:
+            desc = o.title or "—"
+        reason = REASON_LABELS.get(o.reason or "", o.reason or "—")
+        dest = o.destination or "—"
+        op = out_users_map.get(o.created_by, "—") if o.created_by else "—"
+        qty = _fmt_int(o.quantity or 0) if is_prod else "—"
+        valor = _fmt_money(o.amount or 0) if not is_prod else "—"
+        out_rows.append([
+            _fmt_dt(o.created_at),
+            tipo,
+            Paragraph(_esc(str(desc)), ST_CELL),
+            Paragraph(_esc(str(reason)), ST_CELL),
+            Paragraph(_esc(str(dest)), ST_CELL),
+            qty,
+            valor,
+            Paragraph(_esc(str(op)), ST_CELL),
         ])
-    comb_table_data.append([
-        "TOTAL ARRECADADO",
-        _fmt_cur(sales_pay_total),
-        _fmt_cur(total_service_revenue),
-        _fmt_cur(grand_total_revenue),
-        "100.0%",
-    ])
+    if len(out_rows) == 1:
+        out_rows.append(["Sem saídas no período", "—", "—", "—", "—", "—", "—", "—"])
 
-    comb_tbl = Table(comb_table_data, colWidths=comb_cw, repeatRows=1)
-    comb_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), C_DARK_HDR),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
-        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, -1), 7.5),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
-        ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
-        ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("ALIGN",      (1, 0), (-1, -1), "RIGHT"),
-        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
-        ("INNERGRID",  (0, 0), (-1, -1), 0.25, C_BGRAY),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
-        # Highlight cash row
-        ("TEXTCOLOR",  (0, 1), (-1, 1), C_BLUE),
-        ("FONTNAME",   (0, 1), (-1, 1), "Helvetica-Bold"),
-    ]))
-    story.append(comb_tbl)
-    story.append(Spacer(1, 12))
+    out_tbl = Table(out_rows, colWidths=out_cw, repeatRows=1)
+    out_tbl.setStyle(_list_table_style(5))
+    story.append(out_tbl)
+    story.append(Spacer(1, 8))
+    story.append(Paragraph(f"Total de saídas em dinheiro: {_fmt_cur(total_cash_outflow)}", ST_BODY_B))
+    story.append(Paragraph(f"Total de produtos retirados: {_fmt_int(total_prod_outflow_qty)} un.", ST_BODY))
 
-    # ─────────────────────────────────────────────────────────
-    # SECÇÃO 4 — SAÍDAS (PRODUTOS E DINHEIRO)
-    # ─────────────────────────────────────────────────────────
-    story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
-    story.append(Paragraph("4. Saídas Registadas", ST_H2))
-
-    # KPIs de saídas
-    out_kpi_data = [
-        [Paragraph("<b>Saídas de Produtos</b>", ST_CELL), Paragraph("<b>Despesas de Caixa (Dinheiro)</b>", ST_CELL)],
-        [
-            Paragraph(f"<font size='12'><b>{_fmt_int(total_prod_outflow_qty)} un.</b></font>", ST_CELL),
-            Paragraph(f"<font size='12'><b>{_fmt_cur(total_cash_outflow)}</b></font>", ST_CELL),
-        ],
-        [
-            Paragraph(f"{len(prod_outflows)} saída(s) de stock", ST_CELL),
-            Paragraph(f"{len(cash_outflows)} despesa(s) de caixa", ST_CELL),
-        ],
-    ]
-    out_cw_kpi = w_usable / 2.0
-    out_kpi_tbl = Table(out_kpi_data, colWidths=[out_cw_kpi, out_cw_kpi])
-    out_kpi_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), C_LGRAY),
-        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
-        ("INNERGRID",  (0, 0), (-1, -1), 0.3, C_BGRAY),
-        ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("TEXTCOLOR",  (0, 1), (0, 1), C_BLUE),
-        ("TEXTCOLOR",  (1, 1), (1, 1), C_RED),
-    ]))
-    story.append(out_kpi_tbl)
-    story.append(Spacer(1, 6))
-
-    # ── Agrupar produtos retirados por item (sem repetição de linhas) ──
-    prod_grouped_sales = {}
-    for o in prod_outflows:
-        key = o.product_id or (o.product.name if o.product else o.title) or "Outro"
-        p_name = o.product.name if (o.product and o.product.name) else (o.title or "Produto")
-        qty = float(o.quantity or 0)
-        reason = REASON_LABELS.get(o.reason or "", o.reason or "")
-        dest = o.destination or ""
-        op = out_users_map.get(o.created_by, "") if o.created_by else ""
-
-        if key not in prod_grouped_sales:
-            prod_grouped_sales[key] = {
-                "name": p_name,
-                "total_qty": 0.0,
-                "count": 0,
-                "reasons": set(),
-                "destinations": set(),
-                "operators": set(),
-            }
-        entry = prod_grouped_sales[key]
-        entry["total_qty"] += qty
-        entry["count"] += 1
-        if reason:
-            entry["reasons"].add(reason)
-        if dest:
-            entry["destinations"].add(dest)
-        if op:
-            entry["operators"].add(op)
-
-    # 4.1 Tabela de Produtos Retirados (Agrupados)
-    if prod_grouped_sales:
-        story.append(Paragraph(f"<b>Produtos Retirados ({len(prod_grouped_sales)} itens — {_fmt_int(total_prod_outflow_qty)} un. no total)</b>", ST_H3))
-        story.append(Paragraph("Quantidades acumuladas por produto (sem repetição de linhas):", ST_SUB))
-        story.append(Spacer(1, 3))
-
-        s_prod_headers = ["Produto", "Qtd Total Levada", "N.º Saídas", "Motivo(s)", "Destino(s)", "Operador(es)"]
-        s_prod_cw_raw = [150, 70, 45, 90, 85, 80]
-        scale_sp = w_usable / sum(s_prod_cw_raw)
-        s_prod_cw = [w * scale_sp for w in s_prod_cw_raw]
-
-        s_prod_rows = [s_prod_headers]
-        for _, p_data in sorted(prod_grouped_sales.items(), key=lambda x: -x[1]["total_qty"]):
-            reasons_str = ", ".join(sorted(p_data["reasons"])) or "—"
-            dest_str = ", ".join(sorted(p_data["destinations"])) or "—"
-            op_str = ", ".join(sorted(p_data["operators"])) or "—"
-            s_prod_rows.append([
-                Paragraph(_esc(p_data["name"]), ST_CELL),
-                f"{_fmt_int(p_data['total_qty'])} un.",
-                f"{p_data['count']}x",
-                Paragraph(_esc(reasons_str), ST_CELL),
-                Paragraph(_esc(dest_str), ST_CELL),
-                Paragraph(_esc(op_str), ST_CELL),
-            ])
-        s_prod_rows.append(["TOTAL PRODUTOS RETIRADOS", f"{_fmt_int(total_prod_outflow_qty)} un.", f"{len(prod_outflows)} saídas", "", "", ""])
-
-        s_prod_tbl = Table(s_prod_rows, colWidths=s_prod_cw, repeatRows=1)
-        s_prod_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), C_ORANGE),
-            ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
-            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE",   (0, 0), (-1, -1), 7),
-            ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
-            ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
-            ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("ALIGN",      (1, 1), (2, -1), "RIGHT"),
-            ("ALIGN",      (0, -1), (0, -1), "LEFT"),
-            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING",    (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ("LEFTPADDING",   (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
-            ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
-            ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
-        ]))
-        story.append(s_prod_tbl)
-        story.append(Spacer(1, 8))
-
-    # 4.2 Tabela de Despesas de Caixa
-    if cash_outflows:
-        story.append(Paragraph(f"<b>Despesas de Caixa ({len(cash_outflows)} despesas — {_fmt_cur(total_cash_outflow)} no total)</b>", ST_H3))
-        story.append(Spacer(1, 3))
-
-        s_cash_headers = ["ID", "Data / Hora", "Motivo", "Descrição / Item", "Destino", "Operador", "Valor"]
-        s_cash_cw_raw = [22, 48, 55, 150, 75, 75, 75]
-        scale_sc = w_usable / sum(s_cash_cw_raw)
-        s_cash_cw = [w * scale_sc for w in s_cash_cw_raw]
-
-        s_cash_rows = [s_cash_headers]
-        for o in cash_outflows:
-            reason = REASON_LABELS.get(o.reason or "", o.reason or "—")
-            item = o.title or "—"
-            dest = o.destination or "—"
-            op = out_users_map.get(o.created_by, "—") if o.created_by else "—"
-            s_cash_rows.append([
-                f"#{o.id}",
-                _fmt_dt(o.created_at),
-                reason,
-                Paragraph(_esc(item), ST_CELL),
-                Paragraph(_esc(dest), ST_CELL),
-                Paragraph(_esc(op), ST_CELL),
-                _fmt_cur(o.amount or 0),
-            ])
-        s_cash_rows.append(["TOTAL DESPESAS DE CAIXA", "", "", "", "", f"{len(cash_outflows)} saída(s)", _fmt_cur(total_cash_outflow)])
-
-        s_cash_tbl = Table(s_cash_rows, colWidths=s_cash_cw, repeatRows=1)
-        s_cash_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), C_RED),
-            ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
-            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE",   (0, 0), (-1, -1), 7),
-            ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
-            ("BACKGROUND", (0, -1), (-1, -1), C_AMBER),
-            ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("ALIGN",      (-1, 1), (-1, -1), "RIGHT"),
-            ("ALIGN",      (0, -1), (-2, -1), "LEFT"),
-            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING",    (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ("LEFTPADDING",   (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
-            ("BOX",       (0, 0), (-1, -1), 0.5, C_BGRAY),
-            ("INNERGRID", (0, 0), (-1, -1), 0.25, C_BGRAY),
-        ]))
-        story.append(s_cash_tbl)
-        story.append(Spacer(1, 12))
-
-    if not prod_grouped_sales and not cash_outflows:
-        story.append(Paragraph("<i>Sem saídas registadas no período.</i>", ST_SUB))
-        story.append(Spacer(1, 12))
-
-    # ─────────────────────────────────────────────────────────
-    # SECÇÃO 5 — FECHO FINANCEIRO E BALANÇO DE CAIXA
-    # ─────────────────────────────────────────────────────────
-    story.append(HRFlowable(width="100%", thickness=1, color=C_BGRAY))
-    story.append(Paragraph("5. Fecho Financeiro e Balanço de Caixa", ST_H2))
-
-    elec_total = comb_mpesa + comb_skywallet + comb_card + comb_mixed
-    closing_data = [
-        ["Rubrica", "Descrição", "Valor"],
-        ["(+) Dinheiro em Vendas", "Vendas de produtos recebidas em dinheiro físico", _fmt_cur(sales_cash)],
-        ["(+) Dinheiro em Serviços", "Ordens de serviços recebidas em dinheiro físico", _fmt_cur(svc_cash)],
-        ["(=) TOTAL DINHEIRO ENTRADO", "Total bruto arrecadado em dinheiro físico no caixa", _fmt_cur(comb_cash)],
-        ["(−) Despesas de Caixa (Saídas)", "Saídas monetárias e pagamentos em dinheiro retirados do caixa", _fmt_cur(total_cash_outflow)],
-        ["(=) SALDO LÍQUIDO EM CAIXA", "Dinheiro físico disponível no caixa (Entradas − Saídas)", _fmt_cur(net_cash_balance)],
-        ["(+) Meios Digitais / POS", f"M-Pesa ({_fmt_cur(comb_mpesa)}) + E-Mola ({_fmt_cur(comb_skywallet)}) + POS ({_fmt_cur(comb_card)})", _fmt_cur(elec_total)],
-        ["(=) RESULTADO GLOBAL LÍQUIDO", "Total Arrecadado Geral (Vendas + Serviços) − Despesas de Caixa", _fmt_cur(net_grand_balance)],
-    ]
-    cw_cl = [w_usable * 0.32, w_usable * 0.46, w_usable * 0.22]
-    closing_tbl = Table(closing_data, colWidths=cw_cl)
-    closing_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), C_DARK_HDR),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
-        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, -1), 8),
-        ("ALIGN",      (2, 0), (2, -1), "RIGHT"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, C_LGRAY]),
-        # Highlight TOTAL DINHEIRO ENTRADO
-        ("BACKGROUND", (0, 3), (-1, 3), colors.HexColor("#EFF6FF")),
-        ("FONTNAME",   (0, 3), (-1, 3), "Helvetica-Bold"),
-        ("TEXTCOLOR",  (0, 3), (-1, 3), C_BLUE),
-        # Highlight Despesas
-        ("TEXTCOLOR",  (0, 4), (-1, 4), C_RED),
-        # Highlight SALDO LÍQUIDO EM CAIXA
-        ("BACKGROUND", (0, 5), (-1, 5), C_AMBER),
-        ("FONTNAME",   (0, 5), (-1, 5), "Helvetica-Bold"),
-        ("TEXTCOLOR",  (0, 5), (-1, 5), C_GREEN if net_cash_balance >= 0 else C_RED),
-        # Highlight RESULTADO GLOBAL LÍQUIDO
-        ("BACKGROUND", (0, 7), (-1, 7), colors.HexColor("#ECFDF5") if net_grand_balance >= 0 else colors.HexColor("#FEF2F2")),
-        ("FONTNAME",   (0, 7), (-1, 7), "Helvetica-Bold"),
-        ("TEXTCOLOR",  (0, 7), (-1, 7), C_GREEN if net_grand_balance >= 0 else C_RED),
-        ("BOX",        (0, 0), (-1, -1), 0.5, C_BGRAY),
-        ("INNERGRID",  (0, 0), (-1, -1), 0.25, C_BGRAY),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
-    ]))
-    story.append(closing_tbl)
     story.append(Spacer(1, 14))
-
-    # ─────────────────────────────────────────────────────────
-    # RODAPÉ
-    # ─────────────────────────────────────────────────────────
-    story.append(HRFlowable(width="100%", thickness=0.5, color=C_MGRAY))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=C_LINE, spaceAfter=6))
     story.append(Paragraph(
-        f"SkyPDV — Relatório Geral gerado em {_fmt_dt(issued_at)}  |  Terminal: {_esc(terminal.name or '—')}  |  {_esc(company_name)}",
+        f"SkyPDV — Relatório geral gerado em {_fmt_dt(issued_at)}  |  Terminal: {_esc(terminal.name or '—')}  |  {_esc(company_name)}",
         ST_FOOT
     ))
 
