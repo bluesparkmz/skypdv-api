@@ -1897,7 +1897,8 @@ def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) ->
     info_table.setStyle(
         TableStyle(
             [
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D1D5DB")),
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F7F7F7")),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                 ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ]
@@ -1927,10 +1928,10 @@ def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) ->
     summary_table.setStyle(
         TableStyle(
             [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D1D5DB")),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                 ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
             ]
         )
     )
@@ -1955,8 +1956,9 @@ def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) ->
     sales_table.setStyle(
         TableStyle(
             [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D1D5DB")),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("ALIGN", (4, 1), (4, -1), "RIGHT"),
             ]

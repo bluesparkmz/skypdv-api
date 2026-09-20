@@ -1643,9 +1643,6 @@ def get_sales_report_pdf(
     C_TEXT   = colors.HexColor("#222222")
     C_MUTED  = colors.HexColor("#555555")
     C_LINE   = colors.HexColor("#CCCCCC")
-    C_HEADER = colors.HexColor("#111111")
-    C_ROW    = colors.HexColor("#F5F5F5")
-    C_WHITE  = colors.white
 
     styles = getSampleStyleSheet()
     ST_TITLE = ParagraphStyle("RTitle", parent=styles["Title"], fontSize=16, leading=20, textColor=C_BLACK, alignment=TA_LEFT, spaceAfter=2)
@@ -1658,12 +1655,9 @@ def get_sales_report_pdf(
 
     def _list_table_style(align_from_col=1):
         return TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), C_HEADER),
-            ("TEXTCOLOR",  (0, 0), (-1, 0), C_WHITE),
             ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE",   (0, 0), (-1, -1), 8),
-            ("TEXTCOLOR",  (0, 1), (-1, -1), C_TEXT),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, C_ROW]),
+            ("TEXTCOLOR",  (0, 0), (-1, -1), C_TEXT),
             ("ALIGN",      (align_from_col, 0), (-1, -1), "RIGHT"),
             ("ALIGN",      (0, 0), (0, -1), "LEFT"),
             ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
@@ -1671,15 +1665,16 @@ def get_sales_report_pdf(
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ("LEFTPADDING",   (0, 0), (-1, -1), 5),
             ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
-            ("BOX",       (0, 0), (-1, -1), 0.4, C_LINE),
+            ("BOX",       (0, 0), (-1, -1), 0.35, C_LINE),
             ("INNERGRID", (0, 0), (-1, -1), 0.25, C_LINE),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.6, C_BLACK),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.35, C_LINE),
         ])
 
     def _append_payment_totals(total_label, total_val, methods):
         story.append(Paragraph(f"{total_label}: {_fmt_cur(total_val)}", ST_BODY_B))
         for name, val in methods:
-            story.append(Paragraph(f"{name}: {_fmt_cur(val)}", ST_BODY))
+            if _has_val(val):
+                story.append(Paragraph(f"{name}: {_fmt_cur(val)}", ST_BODY))
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
