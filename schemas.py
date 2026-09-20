@@ -883,6 +883,7 @@ class PDVCategory(PDVCategoryBase):
     created_by: Optional[int] = None
     is_active: bool
     product_count: int = 0
+    products_total_value: Decimal = Decimal("0.00")
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

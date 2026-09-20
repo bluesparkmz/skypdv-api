@@ -16,6 +16,7 @@ from typing import Optional, List
 from auth import get_current_user
 from database import Base, engine, get_db, SessionLocal
 from models import PDVProduct, User, FastFoodRestaurant, RestaurantTable
+from routers.categories import router as categories_router
 from routers.sky_pdv_router import router as sky_pdv_router
 from controllers import controller
 import schemas
@@ -212,6 +213,7 @@ def update_phone(
     return {"status": "ok", "phone": phone}
 
 
+app.include_router(categories_router)
 app.include_router(sky_pdv_router)
 
 # Legacy accounts routes without /skypdv prefix (frontend fallback)
