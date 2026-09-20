@@ -1853,6 +1853,20 @@ def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) ->
     difference = Decimal(str(register.difference or (closing_amount - expected_amount)))
     closed_at = register.closed_at or datetime.utcnow()
 
+    payment_labels = {
+        "cash": "Dinheiro",
+        "mpesa": "M-Pesa",
+        "skywallet": "E-Mola / SkyWallet",
+        "card": "POS / Cartão",
+        "mixed": "Misto",
+    }
+    payment_totals: dict[str, Decimal] = {}
+    for sale in sales:
+        method = getattr(sale.payment_method, "value", sale.payment_method)
+        method = str(method or "").strip().lower()
+        if method in payment_labels:
+            payment_totals[method] = payment_totals.get(method, Decimal("0.00")) + Decimal(str(sale.total or 0))
+
     def _fmt_money(value: Any) -> str:
         try:
             return f"{float(value):,.2f} {currency}"
@@ -1883,8 +1897,8 @@ def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) ->
     info_table.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F7F7F7")),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F5F9")),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
                 ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ]
@@ -1893,13 +1907,15 @@ def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) ->
     story.append(info_table)
     story.append(Spacer(1, 12))
 
+    payment_rows = [
+        [payment_labels[method], _fmt_money(amount)]
+        for method in ("cash", "mpesa", "skywallet", "card", "mixed")
+        if (amount := payment_totals.get(method, Decimal("0.00"))) > 0
+    ]
     summary_rows = [
         ["Metrica", "Valor"],
         ["Valor de abertura", _fmt_money(register.opening_amount)],
-        ["Vendas em dinheiro", _fmt_money(register.total_cash)],
-        ["Vendas em cartao", _fmt_money(register.total_card)],
-        ["Vendas em SkyWallet", _fmt_money(register.total_skywallet)],
-        ["Vendas em M-Pesa", _fmt_money(register.total_mpesa)],
+        *payment_rows,
         ["Saidas de dinheiro", _fmt_money(getattr(register, "total_withdrawals", 0) or 0)],
         ["Total de vendas", _fmt_money(register.total_sales)],
         ["Valor esperado", _fmt_money(expected_amount)],
@@ -1912,10 +1928,11 @@ def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) ->
     summary_table.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
                 ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#F1F5F9")),
             ]
         )
     )
@@ -1940,9 +1957,9 @@ def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) ->
     sales_table.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("ALIGN", (4, 1), (4, -1), "RIGHT"),
             ]

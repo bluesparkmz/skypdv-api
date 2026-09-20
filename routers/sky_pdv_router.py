@@ -10,7 +10,7 @@ import io
 
 from database import get_db
 from auth import get_current_user
-from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct, PDVInventory, PDVSupplier, PDVTerminal, FastFoodRestaurant
+from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct, PDVInventory, PDVSupplier, PDVTerminal, PDVCashRegister, FastFoodRestaurant
 import schemas
 from controllers import controller
 from controllers.skywallet_gateway import SkyWalletGatewayClient
@@ -752,6 +752,37 @@ def close_register(
     terminal = controller.get_terminal_required(db, current_user.id)
     controller.require_terminal_permission(db, terminal.id, current_user.id, "can_open_cash_register")
     return controller.close_register(db, data, terminal.id, current_user.id)
+
+
+@router.get("/cash-register/{register_id}/report.pdf")
+def download_cash_register_report(
+    register_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Baixar o relatório PDF de um caixa fechado do terminal atual."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    register = (
+        db.query(PDVCashRegister)
+        .filter(PDVCashRegister.id == register_id, PDVCashRegister.terminal_id == terminal.id)
+        .first()
+    )
+    if not register:
+        raise HTTPException(status_code=404, detail="Caixa não encontrado.")
+    if register.status != "closed":
+        raise HTTPException(status_code=400, detail="O relatório só está disponível após o fechamento do caixa.")
+
+    pdf_bytes = controller.generate_cash_register_report_pdf(db, register)
+    closed_at = register.closed_at or datetime.utcnow()
+    filename = f"fechamento_caixa_{register.id}_{closed_at.strftime('%Y%m%d_%H%M')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
 
 
 @router.get("/cash-register/history", response_model=List[schemas.PDVCashRegister])
