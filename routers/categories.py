@@ -1,11 +1,22 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+import csv
+import io
+from datetime import datetime
+from decimal import Decimal
 from typing import List
+from xml.sax.saxutils import escape
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from controllers import controller
 from database import get_db
-from models import User
+from models import PDVInventory, PDVProduct, User
 import schemas
 
 
@@ -13,6 +24,60 @@ router = APIRouter(
     prefix="/skypdv",
     tags=["skypdv-categories"],
 )
+
+
+def _fmt_money(value) -> str:
+    try:
+        return f"{float(value or 0):,.2f} MT"
+    except Exception:
+        return "0.00 MT"
+
+
+def _fmt_qty(value) -> str:
+    try:
+        amount = float(value or 0)
+        if amount == int(amount):
+            return f"{int(amount):,}"
+        return f"{amount:,.2f}"
+    except Exception:
+        return "0"
+
+
+def _available_products_by_category(db: Session, terminal_id: int):
+    products = (
+        db.query(PDVProduct)
+        .join(PDVInventory, PDVInventory.product_id == PDVProduct.id)
+        .filter(
+            PDVProduct.terminal_id == terminal_id,
+            PDVProduct.is_active == True,
+            PDVInventory.terminal_id == terminal_id,
+            PDVInventory.quantity > 0,
+        )
+        .order_by(PDVProduct.category.asc(), PDVProduct.name.asc())
+        .all()
+    )
+
+    grouped: dict[str, list[PDVProduct]] = {}
+    for product in products:
+        category = str(product.category or "").strip() or "Sem categoria"
+        grouped.setdefault(category, []).append(product)
+
+    return dict(sorted(grouped.items(), key=lambda item: item[0].lower()))
+
+
+def _product_qty(product: PDVProduct) -> Decimal:
+    inventory = getattr(product, "inventory", None)
+    try:
+        return Decimal(str(getattr(inventory, "quantity", 0) or 0))
+    except Exception:
+        return Decimal("0.00")
+
+
+def _product_price(product: PDVProduct) -> Decimal:
+    try:
+        return Decimal(str(getattr(product, "price", 0) or 0))
+    except Exception:
+        return Decimal("0.00")
 
 
 @router.get("/categories", response_model=List[str])
@@ -33,6 +98,126 @@ def list_categories_full(
     """Listar categorias cadastradas com totais dos produtos disponiveis."""
     terminal = controller.get_terminal_required(db, current_user.id)
     return controller.get_categories_list(db, terminal.id)
+
+
+@router.get("/categories/products.pdf")
+def download_category_products_pdf(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Baixar PDF com produtos disponiveis agrupados por categoria."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    grouped = _available_products_by_category(db, terminal.id)
+    issued_at = datetime.utcnow()
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph("Produtos disponiveis por categoria", styles["Title"]),
+        Paragraph(f"Emitido em: {issued_at.strftime('%d/%m/%Y %H:%M')} (UTC)", styles["Normal"]),
+        Spacer(1, 12),
+    ]
+
+    grand_products = 0
+    grand_value = Decimal("0.00")
+
+    if not grouped:
+        story.append(Paragraph("Nenhum produto disponivel encontrado.", styles["Normal"]))
+
+    for category_name, products in grouped.items():
+        story.append(Paragraph(escape(category_name), styles["Heading2"]))
+
+        table_data = [["Produto", "Qtd disponivel", "Preco"]]
+        category_products = 0
+        category_value = Decimal("0.00")
+
+        for product in products:
+            qty = _product_qty(product)
+            price = _product_price(product)
+            category_products += 1
+            category_value += price
+
+            table_data.append([
+                escape(str(product.name or "")),
+                _fmt_qty(qty),
+                _fmt_money(price),
+            ])
+
+        grand_products += category_products
+        grand_value += category_value
+        table_data.append(["TOTAL DA CATEGORIA", f"{category_products} produto(s)", _fmt_money(category_value)])
+
+        table = Table(table_data, colWidths=[295, 105, 115], repeatRows=1)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#F1F5F9")),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]
+            )
+        )
+        story.append(table)
+        story.append(Spacer(1, 12))
+
+    summary = Table(
+        [["Total geral de produtos", f"{grand_products} produto(s)"], ["Valor geral disponivel", _fmt_money(grand_value)]],
+        colWidths=[260, 255],
+    )
+    summary.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("TEXTCOLOR", (0, 1), (1, 1), colors.HexColor("#166534")),
+            ]
+        )
+    )
+    story.append(summary)
+
+    doc.build(story)
+    filename = f"produtos_por_categoria_{issued_at.strftime('%Y-%m-%d')}.pdf"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Access-Control-Expose-Headers": "Content-Disposition",
+    }
+    return StreamingResponse(io.BytesIO(buffer.getvalue()), media_type="application/pdf", headers=headers)
+
+
+@router.get("/categories/products.csv")
+def download_category_products_csv(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Baixar CSV com produtos disponiveis agrupados por categoria."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    grouped = _available_products_by_category(db, terminal.id)
+    issued_at = datetime.utcnow()
+
+    csv_buffer = io.StringIO()
+    writer = csv.writer(csv_buffer, delimiter=";")
+    writer.writerow(["Categoria", "Produto", "Quantidade disponivel", "Preco unitario"])
+
+    for category_name, products in grouped.items():
+        for product in products:
+            qty = _product_qty(product)
+            price = _product_price(product)
+            writer.writerow([category_name, product.name or "", str(qty), str(price)])
+
+    output = io.BytesIO(csv_buffer.getvalue().encode("utf-8-sig"))
+    filename = f"produtos_por_categoria_{issued_at.strftime('%Y-%m-%d')}.csv"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Access-Control-Expose-Headers": "Content-Disposition",
+    }
+    return StreamingResponse(output, media_type="text/csv; charset=utf-8", headers=headers)
 
 
 @router.post("/categories-list", response_model=schemas.PDVCategory)

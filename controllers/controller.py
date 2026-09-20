@@ -3662,24 +3662,19 @@ def get_categories_list(db: Session, terminal_id: int):
         if row[0]
     }
 
-    # Somar o valor de venda do estoque disponivel por categoria:
-    # preco do produto * quantidade atual em estoque.
+    # Somar o valor dos produtos disponiveis por categoria.
+    # Aqui o total acompanha a contagem de produtos: soma o preco unitario
+    # de cada produto ativo/disponivel, sem multiplicar pela quantidade em stock.
     product_value_rows = (
         db.query(
             PDVProduct.category,
-            func.coalesce(func.sum(PDVProduct.price * PDVInventory.quantity), 0).label("products_total_value"),
-        )
-        .join(
-            PDVInventory,
-            PDVInventory.product_id == PDVProduct.id,
+            func.coalesce(func.sum(PDVProduct.price), 0).label("products_total_value"),
         )
         .filter(
             PDVProduct.terminal_id == terminal_id,
             PDVProduct.is_active == True,
             PDVProduct.category.isnot(None),
             PDVProduct.category != "",
-            PDVInventory.terminal_id == terminal_id,
-            PDVInventory.quantity > 0,
         )
         .group_by(PDVProduct.category)
         .all()
