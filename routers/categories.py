@@ -2,21 +2,22 @@ import csv
 import io
 from datetime import datetime
 from decimal import Decimal
-from typing import List
+from typing import List, Optional
 from xml.sax.saxutils import escape
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from auth import get_current_user
 from controllers import controller
 from database import get_db
-from models import PDVInventory, PDVProduct, User
+from models import PDVProduct, User
 import schemas
 
 
@@ -43,19 +44,20 @@ def _fmt_qty(value) -> str:
         return "0"
 
 
-def _available_products_by_category(db: Session, terminal_id: int):
-    products = (
+def _available_products_by_category(db: Session, terminal_id: int, category: Optional[str] = None):
+    query = (
         db.query(PDVProduct)
-        .join(PDVInventory, PDVInventory.product_id == PDVProduct.id)
         .filter(
             PDVProduct.terminal_id == terminal_id,
             PDVProduct.is_active == True,
-            PDVInventory.terminal_id == terminal_id,
-            PDVInventory.quantity > 0,
         )
-        .order_by(PDVProduct.category.asc(), PDVProduct.name.asc())
-        .all()
     )
+
+    if category:
+        category_clean = category.strip()
+        query = query.filter(func.lower(func.trim(PDVProduct.category)) == category_clean.lower())
+
+    products = query.order_by(PDVProduct.category.asc(), PDVProduct.name.asc()).all()
 
     grouped: dict[str, list[PDVProduct]] = {}
     for product in products:
@@ -102,19 +104,21 @@ def list_categories_full(
 
 @router.get("/categories/products.pdf")
 def download_category_products_pdf(
+    category: Optional[str] = Query(None, description="Nome da categoria para imprimir"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Baixar PDF com produtos disponiveis agrupados por categoria."""
     terminal = controller.get_terminal_required(db, current_user.id)
-    grouped = _available_products_by_category(db, terminal.id)
+    grouped = _available_products_by_category(db, terminal.id, category)
     issued_at = datetime.utcnow()
+    report_title = f"Produtos da categoria: {category.strip()}" if category and category.strip() else "Produtos por categoria"
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     story = [
-        Paragraph("Produtos disponiveis por categoria", styles["Title"]),
+        Paragraph(escape(report_title), styles["Title"]),
         Paragraph(f"Emitido em: {issued_at.strftime('%d/%m/%Y %H:%M')} (UTC)", styles["Normal"]),
         Spacer(1, 12),
     ]
@@ -123,7 +127,7 @@ def download_category_products_pdf(
     grand_value = Decimal("0.00")
 
     if not grouped:
-        story.append(Paragraph("Nenhum produto disponivel encontrado.", styles["Normal"]))
+        story.append(Paragraph("Nenhum produto encontrado.", styles["Normal"]))
 
     for category_name, products in grouped.items():
         story.append(Paragraph(escape(category_name), styles["Heading2"]))
@@ -183,7 +187,8 @@ def download_category_products_pdf(
     story.append(summary)
 
     doc.build(story)
-    filename = f"produtos_por_categoria_{issued_at.strftime('%Y-%m-%d')}.pdf"
+    suffix = category.strip().lower().replace(" ", "_") if category and category.strip() else "todas"
+    filename = f"produtos_categoria_{suffix}_{issued_at.strftime('%Y-%m-%d')}.pdf"
     headers = {
         "Content-Disposition": f'attachment; filename="{filename}"',
         "Access-Control-Expose-Headers": "Content-Disposition",
@@ -193,12 +198,13 @@ def download_category_products_pdf(
 
 @router.get("/categories/products.csv")
 def download_category_products_csv(
+    category: Optional[str] = Query(None, description="Nome da categoria para exportar"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Baixar CSV com produtos disponiveis agrupados por categoria."""
     terminal = controller.get_terminal_required(db, current_user.id)
-    grouped = _available_products_by_category(db, terminal.id)
+    grouped = _available_products_by_category(db, terminal.id, category)
     issued_at = datetime.utcnow()
 
     csv_buffer = io.StringIO()
@@ -212,7 +218,8 @@ def download_category_products_csv(
             writer.writerow([category_name, product.name or "", str(qty), str(price)])
 
     output = io.BytesIO(csv_buffer.getvalue().encode("utf-8-sig"))
-    filename = f"produtos_por_categoria_{issued_at.strftime('%Y-%m-%d')}.csv"
+    suffix = category.strip().lower().replace(" ", "_") if category and category.strip() else "todas"
+    filename = f"produtos_categoria_{suffix}_{issued_at.strftime('%Y-%m-%d')}.csv"
     headers = {
         "Content-Disposition": f'attachment; filename="{filename}"',
         "Access-Control-Expose-Headers": "Content-Disposition",
