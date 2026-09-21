@@ -44,6 +44,19 @@ def _fmt_qty(value) -> str:
         return "0"
 
 
+def _fmt_product_qty(product: PDVProduct, quantity: Decimal) -> str:
+    """Mostra quantidades de produtos por peso em quilogramas no relatório."""
+    if not getattr(product, "allow_decimal_quantity", False):
+        return _fmt_qty(quantity)
+
+    try:
+        amount = Decimal(str(quantity or 0))
+        formatted = format(amount, "f").rstrip("0").rstrip(".")
+        return f"{formatted or '0'}kg"
+    except Exception:
+        return "0kg"
+
+
 def _available_products_by_category(db: Session, terminal_id: int, category: Optional[str] = None):
     query = (
         db.query(PDVProduct)
@@ -144,7 +157,7 @@ def download_category_products_pdf(
 
             table_data.append([
                 escape(str(product.name or "")),
-                _fmt_qty(qty),
+                _fmt_product_qty(product, qty),
                 _fmt_money(price),
             ])
 
