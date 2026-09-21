@@ -53,6 +53,17 @@ def to_mozambique_datetime(value: Optional[datetime]) -> Optional[datetime]:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(MOZAMBIQUE_TIMEZONE)
 
+
+def mozambique_datetime_to_utc(value: datetime) -> datetime:
+    """Converte uma data/hora local de Moçambique para UTC sem timezone.
+
+    As colunas do banco usam UTC sem tzinfo; filtros por calendário local devem
+    ser convertidos antes da consulta para não incluir vendas do dia vizinho.
+    """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=MOZAMBIQUE_TIMEZONE)
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
 # ===================================================================
 # Terminals
 # ===================================================================
@@ -2707,7 +2718,13 @@ def get_periodic_report(db: Session, terminal_id: int, period: str, date_str: st
         else:
             raise HTTPException(status_code=400, detail="Invalid period type. Use 'day', 'month' or 'year'.")
             
-        return get_sales_summary(db, terminal_id, start, end, user_id)
+        return get_sales_summary(
+            db,
+            terminal_id,
+            mozambique_datetime_to_utc(start),
+            mozambique_datetime_to_utc(end),
+            user_id,
+        )
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid date format for period {period}. Expected: day=YYYY-MM-DD, month=YYYY-MM, year=YYYY")
 
