@@ -2252,14 +2252,16 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
     
     # O total final jÃ¡ estÃ¡ correto (subtotal com desconto)
     total = total_with_discount
+    selected_payment_method = resolve_payment_method(db, terminal_id, sale_data.payment_method_id, sale_data.payment_method)
+    payment_method_name = selected_payment_method.name
     effective_amount_paid = sale_data.amount_paid if sale_data.amount_paid is not None else total
-    if sale_data.payment_method == PaymentMethod.CASH and effective_amount_paid < total:
+    if payment_method_name.strip().lower() in {"cash", "dinheiro", "numerario"} and effective_amount_paid < total:
         raise HTTPException(status_code=400, detail="Amount paid cannot be lower than total for cash sales")
     
     # 4. Processar Pagamento (IntegraÃ§Ã£o SkyWallet se necessÃ¡rio)
     payment_status = "paid" # PadrÃ£o para POS, assumindo pagamento imediato
     
-    if sale_data.payment_method == PaymentMethod.SKYWALLET:
+    if payment_method_name.strip().lower() == "skywallet":
         # TODO: Chamar controler skywallet para processar pagamento se tiver user_id ou msisdn
         # Por simplicidade, assume sucesso ou que foi feito externamente e registrado aqui
         pass
@@ -2279,7 +2281,8 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
         tax_amount=tax,  # IVA calculado
         total=total,  # Total com IVA incluÃ­do
         
-        payment_method=sale_data.payment_method,
+        payment_method_id=selected_payment_method.id,
+        payment_method=payment_method_name,
         payment_status=payment_status,
         amount_paid=effective_amount_paid,
         change_amount=(effective_amount_paid - total) if effective_amount_paid > total else 0,
@@ -2392,13 +2395,14 @@ def create_sale(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: int,
     register.total_sales += total
     register.sales_count += 1
     
-    if sale.payment_method == PaymentMethod.CASH:
+    payment_key = (sale.payment_method or "").strip().lower()
+    if payment_key in {"cash", "dinheiro", "numerario"}:
         register.total_cash += total
-    elif sale.payment_method == PaymentMethod.CARD:
+    elif payment_key in {"card", "cartao", "cartão", "pos"}:
         register.total_card += total
-    elif sale.payment_method == PaymentMethod.SKYWALLET:
+    elif payment_key == "skywallet":
         register.total_skywallet += total
-    elif sale.payment_method == PaymentMethod.MPESA:
+    elif payment_key in {"mpesa", "m-pesa"}:
         register.total_mpesa += total
         
     db.commit()
@@ -3890,13 +3894,22 @@ def delete_category(db: Session, category_id: int, terminal_id: int):
 # Payment Methods Management
 # ===================================================================
 
+def resolve_payment_method(db: Session, terminal_id: int, method_id: Optional[int], method_name: Optional[str]):
+    query = db.query(PDVPaymentMethod).filter(PDVPaymentMethod.terminal_id == terminal_id, PDVPaymentMethod.is_active == True)
+    method = query.filter(PDVPaymentMethod.id == method_id).first() if method_id is not None else query.filter(func.lower(PDVPaymentMethod.name) == method_name.strip().lower()).first() if method_name else None
+    if not method:
+        raise HTTPException(status_code=400, detail="Payment method is not active or does not belong to this company")
+    return method
+
+
 def get_payment_methods_list(db: Session, terminal_id: int):
     """Listar mÃ©todos do terminal + mÃ©todos globais"""
     # MÃ©todos do prÃ³prio terminal
     own_methods = db.query(PDVPaymentMethod).filter(
         PDVPaymentMethod.terminal_id == terminal_id,
         PDVPaymentMethod.is_active == True
-    ).all()
+    ).order_by(PDVPaymentMethod.name).all()
+    return own_methods
     
     # MÃ©todos globais (compartilhados)
     global_methods = db.query(PDVPaymentMethod).filter(
@@ -3908,13 +3921,22 @@ def get_payment_methods_list(db: Session, terminal_id: int):
     all_methods = {m.id: m for m in own_methods + global_methods}
     return list(all_methods.values())
 
-def create_payment_method(db: Session, method: schemas.PDVPaymentMethodCreate, terminal_id: int, user_id: int, is_global: bool = False):
+def create_payment_method(db: Session, method: schemas.PDVPaymentMethodCreate, terminal_id: int, user_id: int):
+    name = method.name.strip()
+    exists = db.query(PDVPaymentMethod).filter(
+        PDVPaymentMethod.terminal_id == terminal_id,
+        func.lower(PDVPaymentMethod.name) == name.lower(),
+    ).first()
+    if exists:
+        raise HTTPException(status_code=409, detail="A payment method with this name already exists for this company")
     """Criar novo mÃ©todo de pagamento (pessoal ou global)"""
     db_method = PDVPaymentMethod(
-        terminal_id=None if is_global else terminal_id,
+        terminal_id=terminal_id,
         created_by=user_id,
-        is_global=is_global,
-        **method.dict()
+        is_global=False,
+        name=name,
+        description=method.description,
+        icon=method.icon,
     )
     db.add(db_method)
     db.commit()
@@ -3922,6 +3944,7 @@ def create_payment_method(db: Session, method: schemas.PDVPaymentMethodCreate, t
     return db_method
 
 def adopt_payment_method(db: Session, method_id: int, terminal_id: int, user_id: int):
+    raise HTTPException(status_code=410, detail="Global payment methods are no longer available; create a method for this company")
     """Adotar um mÃ©todo de pagamento global para o terminal"""
     global_method = db.query(PDVPaymentMethod).filter(
         PDVPaymentMethod.id == method_id,
@@ -4753,6 +4776,7 @@ def create_invoice(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: i
     payment_status = "paid" if effective_amount_paid >= total else "pending"
     status = "completed" if payment_status == "paid" else "pending"
 
+    selected_payment_method = resolve_payment_method(db, terminal.id, sale_data.payment_method_id, sale_data.payment_method)
     sale = PDVSale(
         terminal_id=terminal.id,
         cash_register_id=cash_register_id,
@@ -4764,7 +4788,8 @@ def create_invoice(db: Session, sale_data: schemas.PDVSaleCreate, terminal_id: i
         discount_percent=sale_data.discount_percent,
         tax_amount=tax,
         total=total,
-        payment_method=sale_data.payment_method,
+        payment_method_id=selected_payment_method.id,
+        payment_method=selected_payment_method.name,
         payment_status=payment_status,
         amount_paid=effective_amount_paid,
         change_amount=(effective_amount_paid - total) if effective_amount_paid > total else 0,

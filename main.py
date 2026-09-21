@@ -18,6 +18,7 @@ from database import Base, engine, get_db, SessionLocal
 from models import PDVProduct, User, FastFoodRestaurant, RestaurantTable
 from routers.categories import router as categories_router
 from routers.sky_pdv_router import router as sky_pdv_router
+from routers.methods._payment import router as payment_methods_router
 from controllers import controller
 import schemas
 
@@ -102,6 +103,20 @@ def _ensure_outflow_schema():
         print(f"Outflow schema migration error: {exc}")
 
 
+def _ensure_sale_payment_method_relation():
+    """Add the FK column without changing historical sales."""
+    try:
+        with engine.begin() as conn:
+            inspector = inspect(conn)
+            if "pdv_sales" not in inspector.get_table_names():
+                return
+            columns = {column["name"] for column in inspector.get_columns("pdv_sales")}
+            if "payment_method_id" not in columns:
+                conn.execute(text("ALTER TABLE pdv_sales ADD COLUMN payment_method_id INTEGER"))
+    except Exception as exc:
+        print(f"Sale payment method migration error: {exc}")
+
+
 def _cash_register_expiry_worker():
     while True:
         db = SessionLocal()
@@ -133,6 +148,7 @@ def start_cash_register_expiry_worker():
         return
     _ensure_account_columns()
     _ensure_outflow_schema()
+    _ensure_sale_payment_method_relation()
     db = SessionLocal()
     try:
         controller.ensure_monthly_tax_records(db)
@@ -214,6 +230,7 @@ def update_phone(
 
 
 app.include_router(categories_router)
+app.include_router(payment_methods_router)
 app.include_router(sky_pdv_router)
 
 # Legacy accounts routes without /skypdv prefix (frontend fallback)

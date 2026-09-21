@@ -291,7 +291,10 @@ class PDVSale(Base):
     discount_percent = Column(DECIMAL(14, 2), default=0.00)
     tax_amount = Column(DECIMAL(14, 2), default=0.00)
     total = Column(DECIMAL(14, 2), nullable=False)
-    payment_method = Column(Enum(PaymentMethod), nullable=False)
+    # The name is kept as a historical snapshot; the FK is the selected
+    # company payment method for all new sales.
+    payment_method_id = Column(Integer, ForeignKey("pdv_payment_methods.id", ondelete="SET NULL"), nullable=True, index=True)
+    payment_method = Column(String(100), nullable=False)
     payment_status = Column(String(20), default="paid")
     amount_paid = Column(DECIMAL(14, 2), default=0.00)
     change_amount = Column(DECIMAL(14, 2), default=0.00)
@@ -311,6 +314,7 @@ class PDVSale(Base):
     cash_register = relationship("PDVCashRegister", back_populates="sales")
     seller = relationship("User", foreign_keys=[created_by], backref="pdv_sales_created")
     items = relationship("PDVSaleItem", back_populates="sale", cascade="all, delete-orphan")
+    payment_method_record = relationship("PDVPaymentMethod", back_populates="sales")
 
 
 class PDVSaleItem(Base):
@@ -397,7 +401,7 @@ class PDVCategory(Base):
     __tablename__ = "pdv_categories"
 
     id = Column(Integer, primary_key=True, index=True)
-    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=True)
+    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=False, index=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     name = Column(String(100), nullable=False)
     description = Column(String(255), nullable=True)
@@ -408,12 +412,11 @@ class PDVCategory(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-
 class PDVPaymentMethod(Base):
     __tablename__ = "pdv_payment_methods"
 
     id = Column(Integer, primary_key=True, index=True)
-    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=True)
+    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=False, index=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     name = Column(String(100), nullable=False)
     description = Column(String(255), nullable=True)
@@ -422,6 +425,8 @@ class PDVPaymentMethod(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    sales = relationship("PDVSale", back_populates="payment_method_record")
 
 
 class PDVExpenseCategory(Base):

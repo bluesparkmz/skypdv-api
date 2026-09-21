@@ -572,7 +572,9 @@ class PDVSaleCreate(BaseModel):
     customer_id: Optional[int] = None
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
-    payment_method: PaymentMethodEnum
+    payment_method_id: Optional[int] = Field(None, gt=0)
+    # Kept only to migrate old clients; it is always resolved inside the company.
+    payment_method: Optional[str] = None
     amount_paid: Optional[Decimal] = None
     change_status: Optional[str] = None
     discount_amount: Decimal = Decimal("0.00")
@@ -613,7 +615,8 @@ class PDVSale(BaseModel):
     discount_percent: Decimal
     tax_amount: Decimal
     total: Decimal
-    payment_method: PaymentMethodEnum
+    payment_method_id: Optional[int] = None
+    payment_method: str
     payment_status: str
     amount_paid: Decimal
     change_amount: Decimal
@@ -878,7 +881,7 @@ class PDVCategoryUpdate(BaseModel):
 class PDVCategory(PDVCategoryBase):
     """Schema for category response"""
     id: int
-    terminal_id: Optional[int]
+    terminal_id: int
     is_global: bool = False
     created_by: Optional[int] = None
     is_active: bool

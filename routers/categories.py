@@ -222,13 +222,19 @@ def download_category_products_csv(
 
     csv_buffer = io.StringIO()
     writer = csv.writer(csv_buffer, delimiter=";")
-    writer.writerow(["Categoria", "Produto", "Quantidade disponivel", "Preco unitario"])
+    writer.writerow(["Categoria", "Produto", "Unidade", "Quantidade disponivel", "Preco unitario"])
 
     for category_name, products in grouped.items():
         for product in products:
             qty = _product_qty(product)
             price = _product_price(product)
-            writer.writerow([category_name, product.name or "", str(qty), str(price)])
+            writer.writerow([
+                category_name,
+                product.name or "",
+                "Kg" if getattr(product, "allow_decimal_quantity", False) else "Un.",
+                _fmt_product_qty(product, qty),
+                str(price),
+            ])
 
     output = io.BytesIO(csv_buffer.getvalue().encode("utf-8-sig"))
     suffix = category.strip().lower().replace(" ", "_") if category and category.strip() else "todas"

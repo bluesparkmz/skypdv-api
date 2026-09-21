@@ -48,6 +48,17 @@ def _mt_in(mt, *targets):
             return True
     return False
 
+
+def _fmt_product_quantity(value, is_weighted: bool = False) -> str:
+    """Format a quantity with the product's actual selling unit."""
+    try:
+        from decimal import Decimal
+        amount = Decimal(str(value or 0))
+        formatted = format(amount, "f").rstrip("0").rstrip(".") or "0"
+        return f"{formatted} Kg" if is_weighted else formatted
+    except Exception:
+        return "0 Kg" if is_weighted else "0"
+
 # ===================================================================
 # Terminal Endpoints
 # ===================================================================
@@ -1487,6 +1498,7 @@ def get_sales_report_pdf(
         db.query(
             PDVProduct.id.label("product_id"),
             PDVProduct.name,
+            PDVProduct.allow_decimal_quantity.label("is_weighted"),
             # The sale item is the historical record. Product.price may have
             # changed after the sale and must not be used in a sales report.
             PDVSaleItem.unit_price.label("price"),
@@ -1506,7 +1518,7 @@ def get_sales_report_pdf(
         sold_products_q = sold_products_q.filter(PDVSale.created_by == filter_user_id)
     sold_products = (
         _apply_scope(sold_products_q)
-        .group_by(PDVProduct.id, PDVProduct.name, PDVSaleItem.unit_price)
+        .group_by(PDVProduct.id, PDVProduct.name, PDVProduct.allow_decimal_quantity, PDVSaleItem.unit_price)
         .order_by(func.sum(PDVSaleItem.quantity).desc())
         .all()
     )
@@ -1745,7 +1757,7 @@ def get_sales_report_pdf(
         price = float(getattr(product, "price", 0) or 0)
         prod_table_data.append([
             Paragraph(_esc(str(product.name or "")), ST_CELL),
-            _fmt_int(qty_sold),
+            _fmt_product_quantity(product.qty, product.is_weighted),
             _fmt_money(price),
             _fmt_money(product.total or 0),
         ])
@@ -2032,14 +2044,16 @@ def get_sales_report_excel(
 
     # Planilha 3: Produtos Vendidos
     ws_products = wb.create_sheet("Produtos Vendidos")
-    ws_products.append(["Produto", "Qtd Vendida", "Stock Inicial", "Entradas", "Saídas", "Preço Unit.", "Receita Total"])
+    ws_products.append(["Produto", "Unidade", "Qtd Vendida", "Stock Inicial", "Entradas", "Saídas", "Preço Unit.", "Receita Total"])
 
     sold_products_query = (
         db.query(
             PDVProduct.id.label("product_id"),
             PDVProduct.name,
-            PDVProduct.price.label("price"),
+            PDVProduct.allow_decimal_quantity.label("is_weighted"),
+            PDVSaleItem.unit_price.label("price"),
             func.sum(PDVSaleItem.quantity).label("qty"),
+            func.sum(PDVSaleItem.subtotal).label("total"),
             func.max(PDVInventory.quantity).label("stock"),
         )
         .join(PDVSale, PDVSale.id == PDVSaleItem.sale_id)
@@ -2054,7 +2068,7 @@ def get_sales_report_excel(
         sold_products_query = sold_products_query.filter(PDVSale.created_by == filter_user_id)
     sold_products = (
         sold_products_query
-        .group_by(PDVProduct.id, PDVProduct.name, PDVProduct.price)
+        .group_by(PDVProduct.id, PDVProduct.name, PDVProduct.allow_decimal_quantity, PDVSaleItem.unit_price)
         .order_by(func.sum(PDVSaleItem.quantity).desc())
         .all()
     )
@@ -2091,10 +2105,11 @@ def get_sales_report_excel(
         exits = float(movement_stats.get("exits", 0) or 0)
         current_stock = float(product.stock or 0)
         initial_stock = current_stock - (entries - exits)
-        rev = price * qty_sold
+        rev = float(product.total or 0)
         ws_products.append([
             str(product.name or ""),
-            float(qty_sold),
+            "Kg" if product.is_weighted else "Un.",
+            _fmt_product_quantity(product.qty, product.is_weighted),
             float(initial_stock),
             float(entries),
             float(exits),
@@ -2295,7 +2310,7 @@ def get_products_report_pdf(
         table_data.append(
             [
                 str(getattr(p, "name", "") or ""),
-                _fmt_qty(qty_dec) if getattr(p, "track_stock", False) else "-",
+                _fmt_product_quantity(qty_dec, getattr(p, "allow_decimal_quantity", False)) if getattr(p, "track_stock", False) else "-",
                 _fmt_money(price_dec),
                 _fmt_money(row_total) if getattr(p, "track_stock", False) else "-",
             ]
@@ -2483,13 +2498,12 @@ def list_payment_methods(
 @router.post("/payment-methods", response_model=schemas.PDVPaymentMethod)
 def create_payment_method(
     method: schemas.PDVPaymentMethodCreate,
-    is_global: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Criar novo método de pagamento (pessoal ou global)"""
     terminal = controller.get_terminal_required(db, current_user.id)
-    return controller.create_payment_method(db, method, terminal.id, current_user.id, is_global)
+    return controller.create_payment_method(db, method, terminal.id, current_user.id)
 
 @router.post("/payment-methods/{method_id}/adopt", response_model=schemas.PDVPaymentMethod)
 def adopt_payment_method(
