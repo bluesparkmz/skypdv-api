@@ -140,7 +140,7 @@ def download_category_products_pdf(
             qty = _product_qty(product)
             price = _product_price(product)
             category_products += 1
-            category_value += price
+            category_value += qty * price
 
             table_data.append([
                 escape(str(product.name or "")),
