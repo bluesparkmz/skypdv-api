@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional, Any
 from io import BytesIO, StringIO
@@ -41,7 +41,17 @@ FastFoodOrderItem = None
 PRIMARY_STOCK_LOCATION = "balcao"
 CATEGORY_DEFAULT_STOCK_LOCATION = "balcao"
 CASH_REGISTER_MAX_DURATION = timedelta(hours=24)
+MOZAMBIQUE_TIMEZONE = timezone(timedelta(hours=2))
 logger = logging.getLogger(__name__)
+
+
+def to_mozambique_datetime(value: Optional[datetime]) -> Optional[datetime]:
+    """Converte datas UTC do banco para a hora de Moçambique (UTC+2)."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(MOZAMBIQUE_TIMEZONE)
 
 # ===================================================================
 # Terminals
@@ -1874,7 +1884,8 @@ def generate_cash_register_report_pdf(db: Session, register: PDVCashRegister) ->
             return f"0.00 {currency}"
 
     def _fmt_dt(value: Optional[datetime]) -> str:
-        return value.strftime("%d/%m/%Y %H:%M") if value else "-"
+        local_value = to_mozambique_datetime(value)
+        return local_value.strftime("%d/%m/%Y %H:%M") if local_value else "-"
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
@@ -5010,12 +5021,23 @@ def _normalize_payment_method_label(value: Any) -> str:
         "card": "Cartao",
         "bci_pos": "BCI POS",
         "pos": "BCI POS",
+        "pos_absa": "POS-ABSA",
+        "pos-absa": "POS-ABSA",
         "mpesa": "M-Pesa",
         "skywallet": "E-Mola",
         "emola": "E-Mola",
         "mixed": "Misto",
     }
     return labels.get(normalized, raw)
+
+
+def _sale_payment_method_label(sale: PDVSale, invoice_meta: Optional[dict[str, Any]] = None) -> str:
+    metadata = invoice_meta or _extract_invoice_meta(sale.notes)
+    saved_label = metadata.get("payment_method_label")
+    if not saved_label:
+        match = re.search(r"M[eé]todo\s*:\s*([^\n)]+)", str(sale.notes or ""), flags=re.IGNORECASE)
+        saved_label = match.group(1).strip() if match else None
+    return _normalize_payment_method_label(saved_label or sale.payment_method)
 
 
 def _normalize_invoice_tax_mode(value: Any) -> str:
@@ -5138,13 +5160,11 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     )
     invoice_number = invoice_meta.get("invoice_number") or sale.id
     invoice_number_display = _format_invoice_number_display(invoice_number)
-    invoice_date = invoice_meta.get("invoice_date") or sale.created_at.strftime("%d/%m/%Y")
+    invoice_date = invoice_meta.get("invoice_date") or to_mozambique_datetime(sale.created_at).strftime("%d/%m/%Y")
     client_name = invoice_meta.get("client_name") or sale.customer_name or "Consumidor Final"
     client_nuit = invoice_meta.get("client_nuit") or ""
     client_address = invoice_meta.get("client_address") or ""
-    payment_method_label = _normalize_payment_method_label(
-        invoice_meta.get("payment_method_label") or sale.payment_method
-    )
+    payment_method_label = _sale_payment_method_label(sale, invoice_meta)
     tax_mode_label = _normalize_invoice_tax_mode(invoice_meta.get("tax_included_in_price"))
     tax_included_in_price = str(invoice_meta.get("tax_included_in_price") or "").strip().lower() in {
         "yes",
@@ -5314,7 +5334,7 @@ def generate_receipt_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         or "Consumidor Final"
     ).strip()
 
-    payment_method_raw = str(invoice_meta.get("payment_method_label") or sale.payment_method or "").lower()
+    payment_method_raw = _sale_payment_method_label(sale, invoice_meta).lower()
     is_cash = payment_method_raw in {"cash", "dinheiro", "numerario"}
     is_bank = payment_method_raw in {"card", "mpesa", "skywallet", "banco", "bci pos", "m-pesa", "e-mola"}
     is_cheque = payment_method_raw in {"cheque"}
@@ -5329,6 +5349,7 @@ def generate_receipt_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
         generated_date = generated_date_raw if isinstance(generated_date_raw, datetime) else datetime.fromisoformat(str(generated_date_raw).replace("Z", "+00:00"))
     except Exception:
         generated_date = sale.created_at
+    generated_date = to_mozambique_datetime(generated_date)
     day_str = generated_date.strftime("%d")
     month_str = generated_date.strftime("%m")
     year_short = generated_date.strftime("%y")

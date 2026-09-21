@@ -906,7 +906,8 @@ def get_outflows_report_pdf(
     }
 
     def _fmt_dt(dt) -> str:
-        return dt.strftime("%d/%m/%Y %H:%M") if dt else ""
+        local_dt = controller.to_mozambique_datetime(dt)
+        return local_dt.strftime("%d/%m/%Y %H:%M") if local_dt else ""
 
     def _fmt_date(dt) -> str:
         return dt.strftime("%d/%m/%Y") if dt else ""
@@ -1425,7 +1426,8 @@ def get_sales_report_pdf(
 
     # ── Helpers ───────────────────────────────────────────────
     def _fmt_dt(dt) -> str:
-        return dt.strftime("%d/%m/%Y %H:%M") if dt else ""
+        local_dt = controller.to_mozambique_datetime(dt)
+        return local_dt.strftime("%d/%m/%Y %H:%M") if local_dt else ""
 
     def _fmt_date(dt) -> str:
         return dt.strftime("%d/%m/%Y") if dt else ""
@@ -2209,9 +2211,10 @@ def get_products_report_pdf(
     from models import PDVProduct
 
     def _fmt_dt(dt: Optional[datetime]) -> str:
-        if not dt:
+        local_dt = controller.to_mozambique_datetime(dt)
+        if not local_dt:
             return ""
-        return dt.strftime("%d/%m/%Y %H:%M")
+        return local_dt.strftime("%d/%m/%Y %H:%M")
 
     def _fmt_date(dt: Optional[datetime]) -> str:
         if not dt:
@@ -2789,9 +2792,10 @@ def get_stock_day_report_pdf(
     from models import PDVProduct
 
     def _fmt_dt(dt: Optional[datetime]) -> str:
-        if not dt:
+        local_dt = controller.to_mozambique_datetime(dt)
+        if not local_dt:
             return ""
-        return dt.strftime("%d/%m/%Y %H:%M")
+        return local_dt.strftime("%d/%m/%Y %H:%M")
 
     def _fmt_num(v, digits: int = 3) -> str:
         if v is None:
@@ -2991,7 +2995,7 @@ def get_stock_day_report_pdf(
     for movement, product in movement_rows[:80]:
         movement_table_rows.append(
             [
-                movement.created_at.strftime("%H:%M"),
+                controller.to_mozambique_datetime(movement.created_at).strftime("%H:%M"),
                 str(product.name or ""),
                 str(movement.movement_type or ""),
                 _fmt_num(abs(float(movement.quantity or 0))),
@@ -3415,9 +3419,10 @@ def export_service_orders_pdf(
             return str(v)
 
     def fmt_dt(dt) -> str:
-        if not dt:
+        local_dt = controller.to_mozambique_datetime(dt)
+        if not local_dt:
             return ""
-        return dt.strftime("%d/%m/%Y %H:%M")
+        return local_dt.strftime("%d/%m/%Y %H:%M")
 
     # ── Mapeamento de método de pagamento ───────────────────────────────────
     PAY_LABELS = {
