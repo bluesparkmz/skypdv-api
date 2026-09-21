@@ -1100,6 +1100,10 @@ def list_sales(
     - Por método de pagamento
     """
     terminal = controller.get_terminal_required(db, current_user.id)
+    # Date-only query parameters are parsed at 00:00. Treat the end date as
+    # inclusive so /sales?end_date=YYYY-MM-DD includes the selected day.
+    if end_date and end_date.hour == 0 and end_date.minute == 0 and end_date.second == 0:
+        end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
     if controller.is_terminal_admin(db, terminal.id, current_user.id):
         filter_user_id = user_id
     else:
@@ -1483,8 +1487,11 @@ def get_sales_report_pdf(
         db.query(
             PDVProduct.id.label("product_id"),
             PDVProduct.name,
-            PDVProduct.price.label("price"),
+            # The sale item is the historical record. Product.price may have
+            # changed after the sale and must not be used in a sales report.
+            PDVSaleItem.unit_price.label("price"),
             func.sum(PDVSaleItem.quantity).label("qty"),
+            func.sum(PDVSaleItem.subtotal).label("total"),
             func.max(PDVInventory.quantity).label("stock"),
         )
         .join(PDVSale, PDVSale.id == PDVSaleItem.sale_id)
@@ -1499,7 +1506,7 @@ def get_sales_report_pdf(
         sold_products_q = sold_products_q.filter(PDVSale.created_by == filter_user_id)
     sold_products = (
         _apply_scope(sold_products_q)
-        .group_by(PDVProduct.id, PDVProduct.name, PDVProduct.price)
+        .group_by(PDVProduct.id, PDVProduct.name, PDVSaleItem.unit_price)
         .order_by(func.sum(PDVSaleItem.quantity).desc())
         .all()
     )
@@ -1526,9 +1533,7 @@ def get_sales_report_pdf(
         elif _mt_in(mv.movement_type, MovementType.OUT, MovementType.SALE):
             stats["exits"] += abs(amt)
 
-    total_product_revenue = sum(
-        float(p.price or 0) * float(p.qty or 0) for p in sold_products if float(p.qty or 0) > 0
-    )
+    total_product_revenue = sum(float(p.total or 0) for p in sold_products)
     total_product_units = sum(float(p.qty or 0) for p in sold_products if float(p.qty or 0) > 0)
 
     # Pagamentos de Vendas
@@ -1742,7 +1747,7 @@ def get_sales_report_pdf(
             Paragraph(_esc(str(product.name or "")), ST_CELL),
             _fmt_int(qty_sold),
             _fmt_money(price),
-            _fmt_money(price * qty_sold),
+            _fmt_money(product.total or 0),
         ])
     if len(prod_table_data) == 1:
         prod_table_data.append(["Sem vendas no período", "—", "—", "—"])
@@ -2381,7 +2386,7 @@ def get_periodic_sales_report(
     """
     terminal = controller.get_terminal_required(db, current_user.id)
     # Se user_id foi fornecido e usuário é admin, usar esse user_id
-    filter_user_id = user_id if (user_id and controller.is_terminal_admin(db, terminal.id, current_user.id)) else current_user.id
+    filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
     return controller.get_periodic_report(db, terminal.id, period, date, filter_user_id)
 
 @router.get("/reports/detailed-monthly", response_model=schemas.DetailedMonthlyReport)
@@ -2399,7 +2404,7 @@ def get_detailed_monthly_report(
     - Se user_id for fornecido e usuário for admin, filtra por esse caixa específico
     """
     terminal = controller.get_terminal_required(db, current_user.id)
-    filter_user_id = user_id if (user_id and controller.is_terminal_admin(db, terminal.id, current_user.id)) else current_user.id
+    filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
     return controller.get_detailed_monthly_report(db, terminal.id, year, month, filter_user_id)
 
 @router.get("/reports/detailed-yearly", response_model=schemas.DetailedYearlyReport)
@@ -2416,7 +2421,7 @@ def get_detailed_yearly_report(
     - Se user_id for fornecido e usuário for admin, filtra por esse caixa específico
     """
     terminal = controller.get_terminal_required(db, current_user.id)
-    filter_user_id = user_id if (user_id and controller.is_terminal_admin(db, terminal.id, current_user.id)) else current_user.id
+    filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
     return controller.get_detailed_yearly_report(db, terminal.id, year, filter_user_id)
 
 @router.get("/reports/top-products", response_model=List[schemas.TopProduct])
