@@ -3375,6 +3375,74 @@ def get_services(
     )
 
 
+@router.get("/services/catalog.pdf")
+def download_services_catalog_pdf(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Gerar o catálogo de serviços e preços em PDF."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from xml.sax.saxutils import escape
+
+    terminal = controller.get_terminal_required(db, current_user.id)
+    services = controller.get_services(db, terminal.id, limit=500)
+    issued_at = controller.to_mozambique_datetime(datetime.utcnow())
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph("Catálogo de Serviços", styles["Title"]),
+        Paragraph(escape(str(terminal.name or "SkyPDV")), styles["Heading2"]),
+        Paragraph(f"Emitido em: {issued_at.strftime('%d/%m/%Y %H:%M')} (Hora de Moçambique)", styles["Normal"]),
+        Spacer(1, 14),
+    ]
+
+    table_data = [["#", "Serviço", "Preço", "Estado"]]
+    for index, service in enumerate(services, start=1):
+        table_data.append([
+            str(index),
+            escape(str(service.name or "")),
+            f"{float(service.price or 0):,.2f} MT",
+            "Ativo" if service.is_active else "Inativo",
+        ])
+
+    if len(table_data) == 1:
+        table_data.append(["", "Nenhum serviço cadastrado.", "", ""])
+
+    table = Table(table_data, colWidths=[35, 300, 105, 75], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F46E5")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("ALIGN", (2, 1), (2, -1), "RIGHT"),
+        ("ALIGN", (3, 0), (3, -1), "CENTER"),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"Total: {len(services)} serviço(s)", styles["Normal"]))
+    doc.build(story)
+
+    filename = f"catalogo_servicos_{issued_at.strftime('%Y-%m-%d')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(buffer.getvalue()),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
+
+
 @router.post("/services", response_model=schemas.PDVServiceResponse)
 def create_service(
     data: schemas.PDVServiceCreate,
