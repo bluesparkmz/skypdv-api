@@ -104,7 +104,7 @@ def _ensure_outflow_schema():
 
 
 def _ensure_sale_payment_method_relation():
-    """Add the FK column without changing historical sales."""
+    """Keep sales compatible with company-defined payment method names."""
     try:
         with engine.begin() as conn:
             inspector = inspect(conn)
@@ -113,6 +113,26 @@ def _ensure_sale_payment_method_relation():
             columns = {column["name"] for column in inspector.get_columns("pdv_sales")}
             if "payment_method_id" not in columns:
                 conn.execute(text("ALTER TABLE pdv_sales ADD COLUMN payment_method_id INTEGER"))
+
+            # Older PostgreSQL deployments used the `paymentmethod` enum here.
+            # A company can now create methods with arbitrary names, so retain
+            # existing values and convert the historical enum to text.
+            if conn.dialect.name == "postgresql":
+                column_type = conn.execute(
+                    text(
+                        "SELECT data_type FROM information_schema.columns "
+                        "WHERE table_schema = current_schema() "
+                        "AND table_name = 'pdv_sales' AND column_name = 'payment_method'"
+                    )
+                ).scalar_one_or_none()
+                if column_type == "USER-DEFINED":
+                    conn.execute(text("ALTER TABLE pdv_sales ALTER COLUMN payment_method DROP DEFAULT"))
+                    conn.execute(
+                        text(
+                            "ALTER TABLE pdv_sales ALTER COLUMN payment_method "
+                            "TYPE VARCHAR(100) USING payment_method::text"
+                        )
+                    )
     except Exception as exc:
         print(f"Sale payment method migration error: {exc}")
 
@@ -126,6 +146,23 @@ def _ensure_service_payment_method_relation():
             columns = {column["name"] for column in inspector.get_columns("pdv_service_orders")}
             if "payment_method_id" not in columns:
                 conn.execute(text("ALTER TABLE pdv_service_orders ADD COLUMN payment_method_id INTEGER"))
+
+            if conn.dialect.name == "postgresql":
+                column_type = conn.execute(
+                    text(
+                        "SELECT data_type FROM information_schema.columns "
+                        "WHERE table_schema = current_schema() "
+                        "AND table_name = 'pdv_service_orders' AND column_name = 'payment_method'"
+                    )
+                ).scalar_one_or_none()
+                if column_type == "USER-DEFINED":
+                    conn.execute(text("ALTER TABLE pdv_service_orders ALTER COLUMN payment_method DROP DEFAULT"))
+                    conn.execute(
+                        text(
+                            "ALTER TABLE pdv_service_orders ALTER COLUMN payment_method "
+                            "TYPE VARCHAR(100) USING payment_method::text"
+                        )
+                    )
     except Exception as exc:
         print(f"Service payment method migration error: {exc}")
 
