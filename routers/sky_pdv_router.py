@@ -2450,8 +2450,9 @@ def get_products_report_pdf(
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (0, 0), (0, -1), "LEFT"),
         ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        # Espaço de segurança por linha, sobretudo no fim de página.
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
         ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2E8F0")),
     ]
@@ -2461,7 +2462,15 @@ def get_products_report_pdf(
         if i % 2 == 0:
             t_styles.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#F8FAFC")))
 
-    products_table = Table(table_data, colWidths=[220, 80, 110, 110], repeatRows=1)
+    # A tabela quebra somente entre linhas, mantendo cada produto inteiro na
+    # página seguinte e repetindo o cabeçalho.
+    products_table = Table(
+        table_data,
+        colWidths=[220, 80, 110, 110],
+        repeatRows=1,
+        splitByRow=1,
+        splitInRow=0,
+    )
     products_table.setStyle(TableStyle(t_styles))
 
     story.append(products_table)

@@ -165,7 +165,15 @@ def download_category_products_pdf(
         grand_value += category_value
         table_data.append(["TOTAL DA CATEGORIA", f"{category_products} produto(s)", _fmt_money(category_value)])
 
-        table = Table(table_data, colWidths=[295, 105, 115], repeatRows=1)
+        # Nunca dividir uma linha ao mudar de página. O cabeçalho repete e a
+        # margem interna protege a última linha visível de ficar cortada.
+        table = Table(
+            table_data,
+            colWidths=[295, 105, 115],
+            repeatRows=1,
+            splitByRow=1,
+            splitInRow=0,
+        )
         table.setStyle(
             TableStyle(
                 [
@@ -176,8 +184,8 @@ def download_category_products_pdf(
                     ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
                     ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
                     ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#F1F5F9")),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
                 ]
             )
         )
