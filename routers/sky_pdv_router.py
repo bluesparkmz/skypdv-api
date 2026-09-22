@@ -16,6 +16,7 @@ from controllers import controller
 from controllers.skywallet_gateway import SkyWalletGatewayClient
 import openpyxl
 from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from whatsapp_service import send_whatsapp_file, send_whatsapp_text
 
 # Criar router principal
@@ -1988,13 +1989,39 @@ def get_sales_report_excel(
         out_users = db.query(UserModel).filter(UserModel.id.in_(out_user_ids)).all()
         out_users_map = {u.id: (u.name or u.username or str(u.id)) for u in out_users}
 
-    # Consolidados
-    comb_cash = sales_cash + svc_cash
-    comb_mpesa = sales_mpesa + svc_mpesa
-    comb_skywallet = sales_skywallet + svc_skywallet
-    comb_card = sales_card + svc_card
-    comb_mixed = sales_mixed + svc_other
-    grand_revenue = comb_cash + comb_mpesa + comb_skywallet + comb_card + comb_mixed
+    # Consolidados pelos métodos cadastrados pela própria empresa.
+    company_methods = (
+        db.query(PDVPaymentMethod)
+        .filter(PDVPaymentMethod.terminal_id == terminal.id, PDVPaymentMethod.is_active == True)
+        .order_by(PDVPaymentMethod.name)
+        .all()
+    )
+    method_names_by_id = {method.id: method.name for method in company_methods}
+    sales_by_method = {method.name: 0.0 for method in company_methods}
+    services_by_method = {method.name: 0.0 for method in company_methods}
+    known_names = {method.name.strip().lower(): method.name for method in company_methods}
+
+    payment_sales_query = (
+        db.query(PDVSale.payment_method_id, PDVSale.payment_method, func.sum(PDVSale.total))
+        .filter(PDVSale.terminal_id == terminal.id, PDVSale.status == "completed")
+        .filter(PDVSale.created_at >= start_date, PDVSale.created_at <= end_date)
+    )
+    if filter_user_id:
+        payment_sales_query = payment_sales_query.filter(PDVSale.created_by == filter_user_id)
+    for method_id, historical_name, value in payment_sales_query.group_by(PDVSale.payment_method_id, PDVSale.payment_method).all():
+        name = method_names_by_id.get(method_id) or str(historical_name or "Não identificado")
+        sales_by_method[name] = sales_by_method.get(name, 0.0) + float(value or 0)
+
+    for so in service_orders:
+        raw_name = _pm_str(so.payment_method).strip()
+        name = known_names.get(raw_name.lower(), raw_name or "Não identificado")
+        services_by_method[name] = services_by_method.get(name, 0.0) + float(so.total or 0)
+
+    total_sales_pay = sum(sales_by_method.values())
+    total_service_rev = sum(services_by_method.values())
+    grand_revenue = total_sales_pay + total_service_rev
+    cash_names = {"cash", "dinheiro", "dinheiro fisico", "dinheiro físico", "numerario", "numerário"}
+    comb_cash = sum(value for name, value in sales_by_method.items() if name.strip().lower() in cash_names) + sum(value for name, value in services_by_method.items() if name.strip().lower() in cash_names)
     net_cash_balance = comb_cash - total_cash_outflow
     net_grand_balance = grand_revenue - total_cash_outflow
 
@@ -2040,21 +2067,25 @@ def get_sales_report_excel(
     ws_summary.append(["Métrica / Rubrica", "Valor"])
     for name, value in summary_rows:
         ws_summary.append([name, value])
+    local_start = controller.to_mozambique_datetime(start_date) or start_date
+    local_end = controller.to_mozambique_datetime(end_date) or end_date
+    ws_summary["B3"] = local_start.strftime("%d/%m/%Y %H:%M")
+    ws_summary["B4"] = local_end.strftime("%d/%m/%Y %H:%M")
 
     # Planilha 2: Meios de Pagamento Consolidados
     ws_pay = wb.create_sheet("Meios de Pagamento")
     ws_pay.append(["Método de Pagamento", "Vendas Produtos", "Serviços Prestados", "TOTAL ARRECADADO", "% Geral"])
-    pay_table_data = [
-        ("Dinheiro (Cash)", sales_cash, svc_cash, comb_cash),
-        ("M-Pesa", sales_mpesa, svc_mpesa, comb_mpesa),
-        ("E-Mola / SkyWallet", sales_skywallet, svc_skywallet, comb_skywallet),
-        ("BCI POS / Cartão", sales_card, svc_card, comb_card),
-        ("Misto / Outros", sales_mixed, svc_other, comb_mixed),
-    ]
-    for m, vp, vs, vt in pay_table_data:
+    method_order = list(sales_by_method)
+    for method_name in services_by_method:
+        if method_name not in sales_by_method:
+            method_order.append(method_name)
+    for m in method_order:
+        vp = sales_by_method.get(m, 0.0)
+        vs = services_by_method.get(m, 0.0)
+        vt = vp + vs
         pct = (vt / grand_revenue * 100) if grand_revenue > 0 else 0.0
-        ws_pay.append([m, vp, vs, vt, f"{pct:.1f}%"])
-    ws_pay.append(["TOTAL GERAL", total_sales_pay, total_service_rev, grand_revenue, "100.0%"])
+        ws_pay.append([m, vp, vs, vt, pct])
+    ws_pay.append(["TOTAL GERAL", total_sales_pay, total_service_rev, grand_revenue, 1 if grand_revenue else 0])
 
     # Planilha 3: Produtos Vendidos
     ws_products = wb.create_sheet("Produtos Vendidos")
@@ -2205,12 +2236,82 @@ def get_sales_report_excel(
         ])
     ws_outflows.append(["TOTAL DESPESAS DE CAIXA", "", "", "", "", len(cash_outflows), float(total_cash_outflow)])
 
+    # Formatação de apresentação: cabeçalhos, moeda, percentagens, filtros e
+    # largura legível em Excel, WPS e LibreOffice.
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    section_fill = PatternFill("solid", fgColor="D9EAF7")
+    total_fill = PatternFill("solid", fgColor="DDEBF7")
+    white_font = Font(color="FFFFFF", bold=True)
+    bold_font = Font(bold=True)
+    thin_border = Border(bottom=Side(style="thin", color="D9E2F3"))
+    money_format = f'#,##0.00 "{currency}"'
+
+    def _style_header(sheet, row, max_col):
+        for cell in sheet[row][:max_col]:
+            cell.fill = header_fill
+            cell.font = white_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    _style_header(ws_summary, 1, 2)
+    for row in range(2, ws_summary.max_row + 1):
+        label = str(ws_summary.cell(row, 1).value or "")
+        ws_summary.cell(row, 1).alignment = Alignment(wrap_text=True, vertical="center")
+        ws_summary.cell(row, 2).alignment = Alignment(horizontal="right", vertical="center")
+        if label.startswith("---"):
+            for cell in ws_summary[row][:2]:
+                cell.fill = section_fill
+                cell.font = bold_font
+        elif isinstance(ws_summary.cell(row, 2).value, (int, float)) and any(word in label.lower() for word in ("receita", "total", "saldo", "resultado", "ticket", "custo", "lucro", "desconto", "imposto", "valor", "despesa")):
+            ws_summary.cell(row, 2).number_format = money_format
+
+    _style_header(ws_pay, 1, 5)
+    ws_pay.freeze_panes = "A2"
+    ws_pay.auto_filter.ref = f"A1:E{ws_pay.max_row}"
+    for row in range(2, ws_pay.max_row + 1):
+        for col in range(2, 5):
+            ws_pay.cell(row, col).number_format = money_format
+        ws_pay.cell(row, 5).number_format = "0.0%"
+        if row == ws_pay.max_row:
+            for cell in ws_pay[row][:5]:
+                cell.fill = total_fill
+                cell.font = bold_font
+
+    for sheet, max_col, money_columns in (
+        (ws_products, 8, (7, 8)),
+        (ws_services, 7, (7,)),
+    ):
+        _style_header(sheet, 1, max_col)
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = f"A1:{get_column_letter(max_col)}{sheet.max_row}"
+        for row in range(2, sheet.max_row + 1):
+            for col in money_columns:
+                sheet.cell(row, col).number_format = money_format
+            for cell in sheet[row][:max_col]:
+                cell.border = thin_border
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+    for row in range(1, ws_outflows.max_row + 1):
+        first_value = str(ws_outflows.cell(row, 1).value or "")
+        if first_value.startswith("---"):
+            for cell in ws_outflows[row][:7]:
+                cell.fill = section_fill
+                cell.font = bold_font
+        elif first_value in {"Produto", "ID"}:
+            _style_header(ws_outflows, row, 7 if first_value == "ID" else 6)
+        elif first_value.startswith("TOTAL"):
+            for cell in ws_outflows[row][:7]:
+                cell.fill = total_fill
+                cell.font = bold_font
+        if row > 1 and isinstance(ws_outflows.cell(row, 7).value, (int, float)):
+            ws_outflows.cell(row, 7).number_format = money_format
+
     # Auto ajuste de colunas em todas as planilhas
     for sheet in wb.worksheets:
         for col in sheet.columns:
             col_letter = get_column_letter(col[0].column)
             max_len = max(len(str(c.value or "")) for c in col)
-            sheet.column_dimensions[col_letter].width = max(max_len + 3, 10)
+            sheet.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 48)
+        sheet.sheet_view.showGridLines = False
 
     buffer = io.BytesIO()
     wb.save(buffer)
