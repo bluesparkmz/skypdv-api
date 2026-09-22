@@ -1660,6 +1660,18 @@ def get_sales_report_pdf(
         out_users_map = {u.id: (u.name or u.username or str(u.id)) for u in out_users}
 
     # ── 5. Fecho de Caixa e Balanço Final ─────────────────────
+    # Apenas métodos explicitamente cadastrados como dinheiro entram no
+    # saldo físico do caixa; os demais continuam no total de receitas.
+    cash_method_names = {
+        "cash", "dinheiro", "dinheiro fisico", "dinheiro físico", "numerario", "numerário"
+    }
+    comb_cash = sum(
+        value for method_name, value in company_payment_totals.items()
+        if str(method_name or "").strip().lower() in cash_method_names
+    ) + sum(
+        value for method_name, value in company_service_totals.items()
+        if str(method_name or "").strip().lower() in cash_method_names
+    )
     net_cash_balance = comb_cash - total_cash_outflow
     net_grand_balance = grand_total_revenue - total_cash_outflow
 
