@@ -52,7 +52,7 @@ def _fmt_product_qty(product: PDVProduct, quantity: Decimal) -> str:
     try:
         amount = Decimal(str(quantity or 0))
         formatted = format(amount, "f").rstrip("0").rstrip(".")
-        return f"{formatted or '0'}kg"
+        return f"{formatted or '0'} Kg"
     except Exception:
         return "0kg"
 

@@ -5259,11 +5259,18 @@ def generate_invoice_pdf(sale: PDVSale, terminal: PDVTerminal, items: List[PDVSa
     elements.append(Paragraph("<br/>".join(invoice_lines), styles["Normal"]))
     elements.append(Spacer(1, 12))
 
+    def _invoice_quantity_label(item: PDVSaleItem) -> str:
+        quantity = Decimal(str(item.quantity or 0))
+        product = getattr(item, "product", None)
+        if product and getattr(product, "allow_decimal_quantity", False):
+            return f"{format(quantity, 'f').rstrip('0').rstrip('.') or '0'} Kg"
+        return format(quantity, "f").rstrip("0").rstrip(".") or "0"
+
     table_data = [["Item", "Qtd", "Preco Unit.", "Total"]]
     for item in items:
         table_data.append([
             item.product_name,
-            f"{Decimal(item.quantity):.2f}",
+            _invoice_quantity_label(item),
             f"{Decimal(item.unit_price):.2f}",
             f"{item.subtotal:.2f}",
         ])

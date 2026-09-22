@@ -1005,7 +1005,7 @@ def get_outflows_report_pdf(
         reason = REASON_LABELS.get(o.reason or "", o.reason or "—")
         dest = o.destination or "—"
         op = users_map.get(o.created_by, "—") if o.created_by else "—"
-        qty = _fmt_qty(o.quantity or 0) if is_prod else "—"
+        qty = _fmt_product_quantity(o.quantity or 0, bool(o.product and o.product.allow_decimal_quantity)) if is_prod else "—"
         product_sale_value = float(o.quantity or 0) * float((o.product.price if o.product else 0) or 0)
         valor = f"{_fmt_money(o.amount or 0)} {currency}" if not is_prod else f"{_fmt_money(product_sale_value)} {currency}"
         out_rows.append([
@@ -1043,7 +1043,7 @@ def get_outflows_report_pdf(
     story.append(out_tbl)
     story.append(Spacer(1, 8))
     story.append(Paragraph(f"Total de saídas em dinheiro: {_fmt_money(total_cash)} {currency}", ST_BODY_B))
-    story.append(Paragraph(f"Total de produtos retirados: {_fmt_qty(total_qty)} un.", ST_BODY))
+    story.append(Paragraph(f"Quantidade total retirada: {_fmt_qty(total_qty)} (consulte Kg/unidade em cada produto)", ST_BODY))
     story.append(Paragraph(f"Valor potencial de venda dos produtos retirados: {_fmt_money(total_product_sale_value)} {currency}", ST_BODY_B))
     story.append(Paragraph(f"Registos: {len(outflows)}", ST_BODY))
 
@@ -1596,11 +1596,10 @@ def get_sales_report_pdf(
 
     # Agrupamento de serviços por nome e por método de pagamento
     svc_by_name: dict = {}
-    svc_cash = 0.0
-    svc_mpesa = 0.0
-    svc_skywallet = 0.0
-    svc_card = 0.0
-    svc_other = 0.0
+    # Service payments follow the same company-owned method list. Never map a
+    # generic legacy value (such as "card") to a bank that was not registered.
+    company_service_totals = {method.name: 0.0 for method in company_payment_methods}
+    company_method_names_ci = {method.name.strip().lower(): method.name for method in company_payment_methods}
 
     def _pm_str(pm):
         if hasattr(pm, "value"):
@@ -1615,26 +1614,13 @@ def get_sales_report_pdf(
         tot = float(so.total or 0)
         entry["total"] += tot
 
-        pm_val = _pm_str(so.payment_method)
-        if "cash" in pm_val or "dinheiro" in pm_val:
-            svc_cash += tot
-        elif "mpesa" in pm_val:
-            svc_mpesa += tot
-        elif "skywallet" in pm_val or "emola" in pm_val or "e-mola" in pm_val:
-            svc_skywallet += tot
-        elif "card" in pm_val or "pos" in pm_val or "bci" in pm_val or "bim" in pm_val:
-            svc_card += tot
-        else:
-            svc_other += tot
+        raw_method_name = _pm_str(so.payment_method).strip()
+        method_name = company_method_names_ci.get(raw_method_name.lower(), raw_method_name or "Não informado")
+        company_service_totals[method_name] = company_service_totals.get(method_name, 0.0) + tot
 
     total_service_revenue = sum(v["total"] for v in svc_by_name.values())
 
     # ── 3. Consolidação Geral por Método de Pagamento ─────────
-    comb_cash      = sales_cash + svc_cash
-    comb_mpesa     = sales_mpesa + svc_mpesa
-    comb_skywallet = sales_skywallet + svc_skywallet
-    comb_card      = sales_card + svc_card
-    comb_mixed     = sales_mixed + svc_other
     # Sales may use any company-defined method, not only the historical enum names.
     grand_total_revenue = sales_pay_total + total_service_revenue
 
@@ -1754,13 +1740,7 @@ def get_sales_report_pdf(
     ))
 
     PAY_SALES = list(company_payment_totals.items())
-    PAY_SERVICES = [
-        ("Dinheiro", svc_cash),
-        ("M-Pesa", svc_mpesa),
-        ("E-Mola / SkyWallet", svc_skywallet),
-        ("POS / Cartão", svc_card),
-        ("Outros", svc_other),
-    ]
+    PAY_SERVICES = list(company_service_totals.items())
 
     # ─────────────────────────────────────────────────────────
     # 1. VENDAS
@@ -1841,7 +1821,7 @@ def get_sales_report_pdf(
         reason = REASON_LABELS.get(o.reason or "", o.reason or "—")
         dest = o.destination or "—"
         op = out_users_map.get(o.created_by, "—") if o.created_by else "—"
-        qty = _fmt_int(o.quantity or 0) if is_prod else "—"
+        qty = _fmt_product_quantity(o.quantity or 0, bool(o.product and o.product.allow_decimal_quantity)) if is_prod else "—"
         product_sale_value = float(o.quantity or 0) * float((o.product.price if o.product else 0) or 0)
         valor = _fmt_money(o.amount or 0) if not is_prod else _fmt_money(product_sale_value)
         out_rows.append([
@@ -1862,7 +1842,7 @@ def get_sales_report_pdf(
     story.append(out_tbl)
     story.append(Spacer(1, 8))
     story.append(Paragraph(f"Total de saídas em dinheiro: {_fmt_cur(total_cash_outflow)}", ST_BODY_B))
-    story.append(Paragraph(f"Total de produtos retirados: {_fmt_int(total_prod_outflow_qty)} un.", ST_BODY))
+    story.append(Paragraph(f"Quantidade total retirada: {_fmt_int(total_prod_outflow_qty)} (consulte Kg/unidade em cada produto)", ST_BODY))
     story.append(Paragraph(f"Valor potencial de venda dos produtos retirados: {_fmt_cur(total_product_outflow_sale_value)}", ST_BODY_B))
 
     story.append(Spacer(1, 14))
