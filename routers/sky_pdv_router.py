@@ -1859,8 +1859,6 @@ def get_sales_report_pdf(
         f"Valor: {_fmt_cur(total_product_outflow_sale_value)}",
         ST_BODY_B,
     ))
-    story.append(Paragraph(f"Valor potencial de venda dos produtos retirados: {_fmt_cur(total_product_outflow_sale_value)}", ST_BODY_B))
-
     story.append(Spacer(1, 14))
     story.append(HRFlowable(width="100%", thickness=0.5, color=C_LINE, spaceAfter=6))
     story.append(Paragraph(
