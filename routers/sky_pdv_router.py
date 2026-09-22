@@ -10,7 +10,7 @@ import io
 
 from database import get_db
 from auth import get_current_user
-from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct, PDVInventory, PDVSupplier, PDVTerminal, PDVCashRegister, FastFoodRestaurant
+from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct, PDVInventory, PDVSupplier, PDVTerminal, PDVCashRegister, FastFoodRestaurant, PDVPaymentMethod
 import schemas
 from controllers import controller
 from controllers.skywallet_gateway import SkyWalletGatewayClient
@@ -945,6 +945,7 @@ def get_outflows_report_pdf(
     cash_outflows = [o for o in outflows if not _is_prod_outflow(o)]
     total_qty = sum(float(o.quantity or 0) for o in prod_outflows)
     total_cash = sum(float(o.amount or 0) for o in cash_outflows)
+    total_product_sale_value = sum(float(o.quantity or 0) * float((o.product.price if o.product else 0) or 0) for o in prod_outflows)
 
     # Build PDF
     C_BLACK  = colors.HexColor("#111111")
@@ -989,7 +990,7 @@ def get_outflows_report_pdf(
         ST_SUB,
     ))
 
-    out_headers = ["Data", "Tipo", "Descrição", "Motivo", "Destino", "Qtd", "Valor", "Operador"]
+    out_headers = ["Data", "Tipo", "Descrição", "Motivo", "Destino", "Qtd", "Valor potencial", "Operador"]
     out_cw_raw = [70, 52, 120, 70, 70, 32, 62, 70]
     scale_out = w_usable / sum(out_cw_raw)
     out_cw = [w * scale_out for w in out_cw_raw]
@@ -1005,7 +1006,8 @@ def get_outflows_report_pdf(
         dest = o.destination or "—"
         op = users_map.get(o.created_by, "—") if o.created_by else "—"
         qty = _fmt_qty(o.quantity or 0) if is_prod else "—"
-        valor = f"{_fmt_money(o.amount or 0)} {currency}" if not is_prod else "—"
+        product_sale_value = float(o.quantity or 0) * float((o.product.price if o.product else 0) or 0)
+        valor = f"{_fmt_money(o.amount or 0)} {currency}" if not is_prod else f"{_fmt_money(product_sale_value)} {currency}"
         out_rows.append([
             _fmt_dt(o.created_at),
             tipo,
@@ -1042,6 +1044,7 @@ def get_outflows_report_pdf(
     story.append(Spacer(1, 8))
     story.append(Paragraph(f"Total de saídas em dinheiro: {_fmt_money(total_cash)} {currency}", ST_BODY_B))
     story.append(Paragraph(f"Total de produtos retirados: {_fmt_qty(total_qty)} un.", ST_BODY))
+    story.append(Paragraph(f"Valor potencial de venda dos produtos retirados: {_fmt_money(total_product_sale_value)} {currency}", ST_BODY_B))
     story.append(Paragraph(f"Registos: {len(outflows)}", ST_BODY))
 
     story.append(Spacer(1, 14))
@@ -1556,6 +1559,28 @@ def get_sales_report_pdf(
     sales_mixed     = float(summary.get("mixed_sales") or 0)
     sales_pay_total = sales_cash + sales_card + sales_skywallet + sales_mpesa + sales_mixed
 
+    # The payment panel must reflect this company's configured methods, even
+    # when a method has no sales in the selected period.
+    company_payment_methods = (
+        db.query(PDVPaymentMethod)
+        .filter(PDVPaymentMethod.terminal_id == terminal.id, PDVPaymentMethod.is_active == True)
+        .order_by(PDVPaymentMethod.name)
+        .all()
+    )
+    payment_names_by_id = {method.id: method.name for method in company_payment_methods}
+    company_payment_totals = {method.name: 0.0 for method in company_payment_methods}
+    payment_sales_query = (
+        db.query(PDVSale.payment_method_id, PDVSale.payment_method, func.sum(PDVSale.total))
+        .filter(PDVSale.terminal_id == terminal.id, PDVSale.status == "completed")
+        .filter(PDVSale.created_at >= start_date, PDVSale.created_at <= end_date)
+    )
+    if filter_user_id:
+        payment_sales_query = payment_sales_query.filter(PDVSale.created_by == filter_user_id)
+    for method_id, legacy_name, total_value in payment_sales_query.group_by(PDVSale.payment_method_id, PDVSale.payment_method).all():
+        method_name = payment_names_by_id.get(method_id) or str(legacy_name or "Não identificado")
+        company_payment_totals[method_name] = company_payment_totals.get(method_name, 0.0) + float(total_value or 0)
+    sales_pay_total = sum(company_payment_totals.values())
+
     # ── 2. Dados de Serviços Prestados ────────────────────────
     svc_q = (
         db.query(PDVServiceOrder)
@@ -1610,7 +1635,8 @@ def get_sales_report_pdf(
     comb_skywallet = sales_skywallet + svc_skywallet
     comb_card      = sales_card + svc_card
     comb_mixed     = sales_mixed + svc_other
-    grand_total_revenue = comb_cash + comb_mpesa + comb_skywallet + comb_card + comb_mixed
+    # Sales may use any company-defined method, not only the historical enum names.
+    grand_total_revenue = sales_pay_total + total_service_revenue
 
     # ── 4. Dados de Saídas ────────────────────────────────────
     REASON_LABELS = {
@@ -1639,6 +1665,7 @@ def get_sales_report_pdf(
     cash_outflows = [o for o in outflows if not _is_prod_outflow(o)]
     total_prod_outflow_qty = sum(float(o.quantity or 0) for o in prod_outflows)
     total_cash_outflow = sum(float(o.amount or 0) for o in cash_outflows)
+    total_product_outflow_sale_value = sum(float(o.quantity or 0) * float((o.product.price if o.product else 0) or 0) for o in prod_outflows)
 
     out_user_ids = list({o.created_by for o in outflows if o.created_by})
     out_users_map: dict = {}
@@ -1692,8 +1719,7 @@ def get_sales_report_pdf(
     def _append_payment_totals(total_label, total_val, methods):
         story.append(Paragraph(f"{total_label}: {_fmt_cur(total_val)}", ST_BODY_B))
         for name, val in methods:
-            if _has_val(val):
-                story.append(Paragraph(f"{name}: {_fmt_cur(val)}", ST_BODY))
+            story.append(Paragraph(f"{name}: {_fmt_cur(val)}", ST_BODY))
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -1727,13 +1753,7 @@ def get_sales_report_pdf(
         ST_SUB
     ))
 
-    PAY_SALES = [
-        ("Dinheiro", sales_cash),
-        ("M-Pesa", sales_mpesa),
-        ("E-Mola / SkyWallet", sales_skywallet),
-        ("POS / Cartão", sales_card),
-        ("Misto", sales_mixed),
-    ]
+    PAY_SALES = list(company_payment_totals.items())
     PAY_SERVICES = [
         ("Dinheiro", svc_cash),
         ("M-Pesa", svc_mpesa),
@@ -1805,7 +1825,7 @@ def get_sales_report_pdf(
     # ─────────────────────────────────────────────────────────
     story.append(Paragraph("Saídas", ST_H2))
 
-    out_headers = ["Data", "Tipo", "Descrição", "Motivo", "Destino", "Qtd", "Valor", "Operador"]
+    out_headers = ["Data", "Tipo", "Descrição", "Motivo", "Destino", "Qtd", "Valor potencial", "Operador"]
     out_cw_raw = [70, 52, 120, 70, 70, 32, 62, 70]
     scale_out = w_usable / sum(out_cw_raw)
     out_cw = [w * scale_out for w in out_cw_raw]
@@ -1822,7 +1842,8 @@ def get_sales_report_pdf(
         dest = o.destination or "—"
         op = out_users_map.get(o.created_by, "—") if o.created_by else "—"
         qty = _fmt_int(o.quantity or 0) if is_prod else "—"
-        valor = _fmt_money(o.amount or 0) if not is_prod else "—"
+        product_sale_value = float(o.quantity or 0) * float((o.product.price if o.product else 0) or 0)
+        valor = _fmt_money(o.amount or 0) if not is_prod else _fmt_money(product_sale_value)
         out_rows.append([
             _fmt_dt(o.created_at),
             tipo,
@@ -1842,6 +1863,7 @@ def get_sales_report_pdf(
     story.append(Spacer(1, 8))
     story.append(Paragraph(f"Total de saídas em dinheiro: {_fmt_cur(total_cash_outflow)}", ST_BODY_B))
     story.append(Paragraph(f"Total de produtos retirados: {_fmt_int(total_prod_outflow_qty)} un.", ST_BODY))
+    story.append(Paragraph(f"Valor potencial de venda dos produtos retirados: {_fmt_cur(total_product_outflow_sale_value)}", ST_BODY_B))
 
     story.append(Spacer(1, 14))
     story.append(HRFlowable(width="100%", thickness=0.5, color=C_LINE, spaceAfter=6))
