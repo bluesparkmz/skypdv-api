@@ -1854,8 +1854,11 @@ def get_sales_report_pdf(
     out_tbl.setStyle(_list_table_style(5))
     story.append(out_tbl)
     story.append(Spacer(1, 8))
-    story.append(Paragraph(f"Total de saídas em dinheiro: {_fmt_cur(total_cash_outflow)}", ST_BODY_B))
-    story.append(Paragraph(f"Quantidade total retirada: {_fmt_int(total_prod_outflow_qty)} (consulte Kg/unidade em cada produto)", ST_BODY))
+    story.append(Paragraph(
+        f"Quantidade total retirada: {_fmt_int(total_prod_outflow_qty)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+        f"Total de saídas em dinheiro: {_fmt_cur(total_cash_outflow)}",
+        ST_BODY_B,
+    ))
     story.append(Paragraph(f"Valor potencial de venda dos produtos retirados: {_fmt_cur(total_product_outflow_sale_value)}", ST_BODY_B))
 
     story.append(Spacer(1, 14))
