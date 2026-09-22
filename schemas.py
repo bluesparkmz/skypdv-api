@@ -1148,7 +1148,7 @@ class PDVServiceOrderCreate(BaseModel):
     discount_amount: Optional[Decimal] = Decimal("0.00")
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
-    payment_method: str = Field(..., description="cash | card | mpesa | skywallet | mixed")
+    payment_method_id: int = Field(..., gt=0)
     amount_paid: Optional[Decimal] = None
     notes: Optional[str] = None
 
@@ -1167,6 +1167,7 @@ class PDVServiceOrderResponse(BaseModel):
     total: Decimal
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
+    payment_method_id: Optional[int] = None
     payment_method: str
     amount_paid: Decimal
     change_amount: Decimal

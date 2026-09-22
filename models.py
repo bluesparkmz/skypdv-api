@@ -563,7 +563,8 @@ class PDVServiceOrder(Base):
     total = Column(DECIMAL(14, 2), nullable=False)
     customer_name = Column(String(255), nullable=True)
     customer_phone = Column(String(50), nullable=True)
-    payment_method = Column(Enum(PaymentMethod), nullable=False)
+    payment_method_id = Column(Integer, ForeignKey("pdv_payment_methods.id", ondelete="SET NULL"), nullable=True, index=True)
+    payment_method = Column(String(100), nullable=False)
     amount_paid = Column(DECIMAL(14, 2), default=0.00)
     change_amount = Column(DECIMAL(14, 2), default=0.00)
     notes = Column(Text, nullable=True)
@@ -577,6 +578,7 @@ class PDVServiceOrder(Base):
     service = relationship("PDVService", back_populates="orders")
     cash_register = relationship("PDVCashRegister")
     created_by_user = relationship("User", foreign_keys=[created_by])
+    payment_method_record = relationship("PDVPaymentMethod")
 
 
 class PDVOutflow(Base):

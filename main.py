@@ -117,6 +117,19 @@ def _ensure_sale_payment_method_relation():
         print(f"Sale payment method migration error: {exc}")
 
 
+def _ensure_service_payment_method_relation():
+    try:
+        with engine.begin() as conn:
+            inspector = inspect(conn)
+            if "pdv_service_orders" not in inspector.get_table_names():
+                return
+            columns = {column["name"] for column in inspector.get_columns("pdv_service_orders")}
+            if "payment_method_id" not in columns:
+                conn.execute(text("ALTER TABLE pdv_service_orders ADD COLUMN payment_method_id INTEGER"))
+    except Exception as exc:
+        print(f"Service payment method migration error: {exc}")
+
+
 def _cash_register_expiry_worker():
     while True:
         db = SessionLocal()
@@ -149,6 +162,7 @@ def start_cash_register_expiry_worker():
     _ensure_account_columns()
     _ensure_outflow_schema()
     _ensure_sale_payment_method_relation()
+    _ensure_service_payment_method_relation()
     db = SessionLocal()
     try:
         controller.ensure_monthly_tax_records(db)

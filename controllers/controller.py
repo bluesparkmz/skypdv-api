@@ -6079,10 +6079,12 @@ def create_service_order(
         discount_amount = Decimal("0.00")
     total = max(Decimal("0.00"), subtotal - discount_amount)
 
+    selected_payment_method = resolve_payment_method(db, terminal_id, data.payment_method_id, None)
+    payment_method = selected_payment_method.name
+    payment_key = payment_method.strip().lower()
     effective_amount_paid = Decimal(str(data.amount_paid)) if data.amount_paid is not None else total
-    payment_method = (data.payment_method or "cash").strip().lower()
 
-    if payment_method == "cash" and effective_amount_paid < total:
+    if payment_key in {"cash", "dinheiro", "dinheiro fisico", "numerario"} and effective_amount_paid < total:
         raise HTTPException(status_code=400, detail="O valor pago não pode ser inferior ao total.")
 
     change_amount = max(Decimal("0.00"), effective_amount_paid - total)
@@ -6100,6 +6102,7 @@ def create_service_order(
         total=total,
         customer_name=data.customer_name.strip() if data.customer_name else None,
         customer_phone=data.customer_phone.strip() if data.customer_phone else None,
+        payment_method_id=selected_payment_method.id,
         payment_method=payment_method,
         amount_paid=effective_amount_paid,
         change_amount=change_amount,
@@ -6116,13 +6119,13 @@ def create_service_order(
     if register:
         register.total_sales += total
         register.sales_count += 1
-        if payment_method == "cash":
+        if payment_key in {"cash", "dinheiro", "dinheiro fisico", "numerario"}:
             register.total_cash += total
-        elif payment_method == "card":
+        elif payment_key in {"card", "pos", "absa-pos"}:
             register.total_card += total
-        elif payment_method == "mpesa":
+        elif payment_key in {"mpesa", "m-pesa"}:
             register.total_mpesa += total
-        elif payment_method == "skywallet":
+        elif payment_key == "skywallet":
             register.total_skywallet += total
 
     db.commit()
