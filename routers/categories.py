@@ -124,7 +124,7 @@ def download_category_products_pdf(
     """Baixar PDF com produtos disponiveis agrupados por categoria."""
     terminal = controller.get_terminal_required(db, current_user.id)
     grouped = _available_products_by_category(db, terminal.id, category)
-    issued_at = datetime.utcnow()
+    issued_at = controller.to_mozambique_datetime(datetime.utcnow())
     report_title = f"Produtos da categoria: {category.strip()}" if category and category.strip() else "Produtos por categoria"
 
     buffer = io.BytesIO()
@@ -132,7 +132,7 @@ def download_category_products_pdf(
     styles = getSampleStyleSheet()
     story = [
         Paragraph(escape(report_title), styles["Title"]),
-        Paragraph(f"Emitido em: {issued_at.strftime('%d/%m/%Y %H:%M')} (UTC)", styles["Normal"]),
+        Paragraph(f"Emitido em: {issued_at.strftime('%d/%m/%Y %H:%M')} (Hora de Moçambique)", styles["Normal"]),
         Spacer(1, 12),
     ]
 
