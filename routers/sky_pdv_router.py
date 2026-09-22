@@ -1673,8 +1673,10 @@ def get_sales_report_pdf(
         value for method_name, value in company_service_totals.items()
         if str(method_name or "").strip().lower() in cash_method_names
     )
-    net_cash_balance = comb_cash - total_cash_outflow
-    net_grand_balance = grand_total_revenue - total_cash_outflow
+    # As saídas são lançamentos informativos: não reduzem os totais de vendas.
+    # Elas são apresentadas separadamente na secção de saídas do relatório.
+    cash_sales_total = comb_cash
+    total_revenue = grand_total_revenue
 
     # ── Dados da Empresa (Terminal Settings) ──────────────────
     t_settings = terminal.settings if isinstance(terminal.settings, dict) else {}
@@ -2027,8 +2029,10 @@ def get_sales_report_excel(
     grand_revenue = total_sales_pay + total_service_rev
     cash_names = {"cash", "dinheiro", "dinheiro fisico", "dinheiro físico", "numerario", "numerário"}
     comb_cash = sum(value for name, value in sales_by_method.items() if name.strip().lower() in cash_names) + sum(value for name, value in services_by_method.items() if name.strip().lower() in cash_names)
-    net_cash_balance = comb_cash - total_cash_outflow
-    net_grand_balance = grand_revenue - total_cash_outflow
+    # Não abater saídas dos totais arrecadados; o valor das saídas fica em
+    # linha própria, abaixo dos totais de vendas e serviços.
+    cash_sales_total = comb_cash
+    total_revenue = grand_revenue
 
     # ── Criar Workbook ────────────────────────────────────────
     wb = openpyxl.Workbook()
@@ -2045,10 +2049,9 @@ def get_sales_report_excel(
         ("--- INDICADORES PRINCIPAIS ---", ""),
         ("Receita Vendas de Produtos", float(summary.get("total_revenue") or 0)),
         ("Receita Serviços Prestados", total_service_rev),
-        ("TOTAL ARRECADADO BRUTO", grand_revenue),
-        ("Total Saídas Dinheiro (Despesas)", total_cash_outflow),
-        ("SALDO FINAL EM CAIXA (Dinheiro)", net_cash_balance),
-        ("RESULTADO GLOBAL LÍQUIDO", net_grand_balance),
+        ("TOTAL ARRECADADO (Vendas e Serviços)", total_revenue),
+        ("TOTAL EM DINHEIRO (Vendas e Serviços)", cash_sales_total),
+        ("Saídas em Dinheiro (Informativo)", total_cash_outflow),
         ("", ""),
         ("--- DETALHE DE VENDAS ---", ""),
         ("Total Transacções de Venda", summary["total_sales"]),

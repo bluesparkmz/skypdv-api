@@ -4371,13 +4371,6 @@ def create_outflow(db: Session, data: schemas.PDVOutflowCreate, terminal_id: int
     if not register:
         raise HTTPException(status_code=400, detail="Cash register is closed. Please open register first.")
 
-    available = _available_cash_in_register(register)
-    if amount > available:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Dinheiro insuficiente no caixa. Disponivel: {available:.2f}",
-        )
-
     reason_label = REASON_LABELS.get(reason, reason)
     title = (data.title or "").strip() or f"Saida de caixa - {reason_label}"
     expense_id = None
