@@ -766,37 +766,6 @@ def close_register(
     return controller.close_register(db, data, terminal.id, current_user.id)
 
 
-@router.get("/cash-register/{register_id}/report.pdf")
-def download_cash_register_report(
-    register_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Baixar o relatório PDF de um caixa fechado do terminal atual."""
-    terminal = controller.get_terminal_required(db, current_user.id)
-    register = (
-        db.query(PDVCashRegister)
-        .filter(PDVCashRegister.id == register_id, PDVCashRegister.terminal_id == terminal.id)
-        .first()
-    )
-    if not register:
-        raise HTTPException(status_code=404, detail="Caixa não encontrado.")
-    if register.status != "closed":
-        raise HTTPException(status_code=400, detail="O relatório só está disponível após o fechamento do caixa.")
-
-    pdf_bytes = controller.generate_cash_register_report_pdf(db, register)
-    closed_at = register.closed_at or datetime.utcnow()
-    filename = f"fechamento_caixa_{register.id}_{closed_at.strftime('%Y%m%d_%H%M')}.pdf"
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "Access-Control-Expose-Headers": "Content-Disposition",
-        },
-    )
-
-
 @router.get("/cash-register/history", response_model=List[schemas.PDVCashRegister])
 def list_cash_registers(
     start_date: Optional[datetime] = None,
