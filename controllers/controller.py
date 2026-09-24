@@ -3610,6 +3610,147 @@ def void_sale(db: Session, sale_id: int, terminal_id: int, user_id: int):
     return sale
 
 
+def update_sale_items(db: Session, sale_id: int, sale_data: schemas.PDVSaleItemsUpdate, terminal_id: int, user_id: int):
+    """Troca ou remove itens de uma venda, mantendo stock, caixa e totais consistentes."""
+    sale = db.query(PDVSale).filter(PDVSale.id == sale_id, PDVSale.terminal_id == terminal_id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+    if not is_terminal_admin(db, terminal_id, user_id) and sale.created_by != user_id:
+        raise HTTPException(status_code=403, detail="Only the sale operator or an admin can adjust sale items")
+    if sale.status in {"voided", "cancelled"}:
+        raise HTTPException(status_code=400, detail="Cannot adjust a voided sale")
+    if sale.cash_register and sale.cash_register.status != "open":
+        raise HTTPException(status_code=400, detail="Cannot adjust items after the cash register is closed")
+
+    terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
+    previous_items = list(sale.items)
+    previous_item_total = sum((Decimal(str(item.subtotal or 0)) for item in previous_items), Decimal("0.00"))
+    fixed_discount = max(
+        Decimal("0.00"),
+        Decimal(str(sale.discount_amount or 0))
+        - previous_item_total * (Decimal(str(sale.discount_percent or 0)) / Decimal("100")),
+    )
+
+    items_to_add = []
+    item_total_before_sale_discount = Decimal("0.00")
+    requested_quantities = {}
+    for item_data in sale_data.items:
+        product = db.query(PDVProduct).filter(
+            PDVProduct.id == item_data.product_id,
+            PDVProduct.terminal_id == terminal_id,
+            PDVProduct.is_active == True,
+        ).first()
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Product {item_data.product_id} not found")
+        if not product.allow_decimal_quantity and item_data.quantity != item_data.quantity.to_integral_value():
+            raise HTTPException(status_code=400, detail=f"Product {product.name} does not allow decimal quantity")
+
+        if product.track_stock:
+            requested_quantities[product.id] = requested_quantities.get(product.id, Decimal("0.00")) + item_data.quantity
+
+        unit_price = item_data.unit_price if item_data.unit_price is not None else product.price
+        raw_total = unit_price * item_data.quantity
+        item_discount = item_data.discount_amount + raw_total * (item_data.discount_percent / Decimal("100"))
+        item_subtotal = raw_total - item_discount
+        items_to_add.append({
+            "product": product,
+            "data": item_data,
+            "unit_price": unit_price,
+            "discount": item_discount,
+            "subtotal": item_subtotal,
+        })
+        item_total_before_sale_discount += item_subtotal
+
+    returned_quantities = {}
+    for item in previous_items:
+        if item.product and item.product.track_stock:
+            returned_quantities[item.product_id] = returned_quantities.get(item.product_id, Decimal("0.00")) + Decimal(str(item.quantity))
+
+    for product_id, quantity_needed in requested_quantities.items():
+        inventory = get_primary_inventory(db, product_id, terminal_id, create_if_missing=True)
+        available = Decimal(str(inventory.quantity or 0)) + returned_quantities.get(product_id, Decimal("0.00"))
+        if available < quantity_needed:
+            product_name = next(item["product"].name for item in items_to_add if item["product"].id == product_id)
+            raise HTTPException(status_code=400, detail=f"Insufficient stock for {product_name}. Available: {available}")
+
+    sale_discount = fixed_discount + item_total_before_sale_discount * (Decimal(str(sale.discount_percent or 0)) / Decimal("100"))
+    total = item_total_before_sale_discount - sale_discount
+    tax_rate = Decimal(str(terminal.tax_rate or Decimal("16.00"))) / Decimal("100")
+    subtotal_without_tax = total / (Decimal("1.00") + tax_rate)
+    tax_amount = total - subtotal_without_tax
+    previous_total = Decimal(str(sale.total or 0))
+    total_difference = total - previous_total
+
+    product_deltas = {}
+    for product_id, quantity in returned_quantities.items():
+        product_deltas[product_id] = product_deltas.get(product_id, Decimal("0.00")) + quantity
+    for product_id, quantity in requested_quantities.items():
+        product_deltas[product_id] = product_deltas.get(product_id, Decimal("0.00")) - quantity
+
+    for product_id, quantity_delta in product_deltas.items():
+        if quantity_delta == 0:
+            continue
+        product = db.query(PDVProduct).filter(PDVProduct.id == product_id).first()
+        inventory = get_primary_inventory(db, product_id, terminal_id, create_if_missing=True)
+        quantity_before = Decimal(str(inventory.quantity or 0))
+        quantity_after = quantity_before + quantity_delta
+        inventory.quantity = quantity_after
+        db.add(PDVStockMovement(
+            product_id=product_id,
+            terminal_id=terminal_id,
+            movement_type=MovementType.RETURN if quantity_delta > 0 else MovementType.SALE,
+            quantity=quantity_delta,
+            quantity_before=quantity_before,
+            quantity_after=quantity_after,
+            reference=f"Sale adjustment #{sale.id}",
+            reference_id=sale.id,
+            notes="Troca/devolução parcial da venda",
+            created_by=user_id,
+        ))
+
+    for item in previous_items:
+        db.delete(item)
+    db.flush()
+    for item_data in items_to_add:
+        product = item_data["product"]
+        data = item_data["data"]
+        db.add(PDVSaleItem(
+            sale_id=sale.id,
+            product_id=product.id,
+            product_name=product.name,
+            product_sku=product.sku,
+            quantity=data.quantity,
+            unit_price=item_data["unit_price"],
+            discount_amount=item_data["discount"],
+            discount_percent=data.discount_percent,
+            subtotal=item_data["subtotal"],
+            notes=data.notes,
+        ))
+
+    sale.subtotal = subtotal_without_tax
+    sale.discount_amount = sale_discount
+    sale.tax_amount = tax_amount
+    sale.total = total
+    sale.change_amount = max(Decimal("0.00"), Decimal(str(sale.amount_paid or 0)) - total)
+
+    register = sale.cash_register
+    if register and register.status == "open" and total_difference:
+        register.total_sales = Decimal(str(register.total_sales or 0)) + total_difference
+        payment_key = (sale.payment_method or "").strip().lower()
+        if payment_key in {"cash", "dinheiro", "numerario"}:
+            register.total_cash = Decimal(str(register.total_cash or 0)) + total_difference
+        elif payment_key in {"card", "cartao", "cartão", "pos"}:
+            register.total_card = Decimal(str(register.total_card or 0)) + total_difference
+        elif payment_key == "skywallet":
+            register.total_skywallet = Decimal(str(register.total_skywallet or 0)) + total_difference
+        elif payment_key in {"mpesa", "m-pesa"}:
+            register.total_mpesa = Decimal(str(register.total_mpesa or 0)) + total_difference
+
+    db.commit()
+    db.refresh(sale)
+    return sale
+
+
 def update_sale_payment_method(db: Session, sale_id: int, payment_method_id: int, terminal_id: int, user_id: int):
     sale = db.query(PDVSale).filter(PDVSale.id == sale_id, PDVSale.terminal_id == terminal_id).first()
     if not sale:

@@ -641,6 +641,11 @@ class PDVSaleVoid(BaseModel):
     refund_to_wallet: bool = False  # Se deve devolver para SkyWallet
 
 
+class PDVSaleItemsUpdate(BaseModel):
+    """Itens finais de uma venda após troca ou devolução parcial."""
+    items: List[PDVSaleItemCreate] = Field(..., min_length=1)
+
+
 class PDVSalePaymentMethodUpdate(BaseModel):
     """Método de pagamento corrigido por um administrador."""
     payment_method_id: int = Field(..., gt=0)

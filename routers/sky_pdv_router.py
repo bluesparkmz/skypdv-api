@@ -1304,6 +1304,18 @@ def void_sale(
     return controller.void_sale(db, sale_id, terminal.id, current_user.id)
 
 
+@router.patch("/sales/{sale_id}/items", response_model=schemas.PDVSale)
+def update_sale_items(
+    sale_id: int,
+    data: schemas.PDVSaleItemsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Trocar, remover ou adicionar itens a uma venda concluída."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.update_sale_items(db, sale_id, data, terminal.id, current_user.id)
+
+
 @router.patch("/sales/{sale_id}/payment-method", response_model=schemas.PDVSale)
 def update_sale_payment_method(
     sale_id: int,
