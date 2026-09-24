@@ -3609,6 +3609,44 @@ def void_sale(db: Session, sale_id: int, terminal_id: int, user_id: int):
     db.refresh(sale)
     return sale
 
+
+def update_sale_payment_method(db: Session, sale_id: int, payment_method_id: int, terminal_id: int, user_id: int):
+    sale = db.query(PDVSale).filter(PDVSale.id == sale_id, PDVSale.terminal_id == terminal_id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+    if not is_terminal_admin(db, terminal_id, user_id) and sale.created_by != user_id:
+        raise HTTPException(status_code=403, detail="Only the sale operator or an admin can adjust its payment method")
+    if sale.status in {"voided", "cancelled"}:
+        raise HTTPException(status_code=400, detail="Cannot adjust a voided sale")
+
+    payment_method = resolve_payment_method(db, terminal_id, payment_method_id, None)
+    if sale.cash_register and sale.cash_register.status == "open":
+        def register_total_field(method_name: str) -> Optional[str]:
+            key = (method_name or "").strip().lower().replace("-", "").replace(" ", "")
+            if key in {"cash", "dinheiro", "numerario"}:
+                return "total_cash"
+            if key in {"card", "cartao", "pos"}:
+                return "total_card"
+            if key in {"skywallet", "emola"}:
+                return "total_skywallet"
+            if key in {"mpesa"}:
+                return "total_mpesa"
+            return None
+
+        amount = Decimal(str(sale.total or 0))
+        previous_field = register_total_field(sale.payment_method)
+        next_field = register_total_field(payment_method.name)
+        if previous_field:
+            setattr(sale.cash_register, previous_field, Decimal(str(getattr(sale.cash_register, previous_field) or 0)) - amount)
+        if next_field:
+            setattr(sale.cash_register, next_field, Decimal(str(getattr(sale.cash_register, next_field) or 0)) + amount)
+
+    sale.payment_method_id = payment_method.id
+    sale.payment_method = payment_method.name
+    db.commit()
+    db.refresh(sale)
+    return sale
+
 def get_stock_movements(db: Session, terminal_id: int, product_id: Optional[int] = None, skip: int = 0, limit: int = 100):
     """Retorna o histÃ³rico de movimentaÃ§Ãµes de stock"""
     query = db.query(PDVStockMovement).filter(PDVStockMovement.terminal_id == terminal_id)

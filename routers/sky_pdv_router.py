@@ -1303,6 +1303,18 @@ def void_sale(
     terminal = controller.get_terminal_required(db, current_user.id)
     return controller.void_sale(db, sale_id, terminal.id, current_user.id)
 
+
+@router.patch("/sales/{sale_id}/payment-method", response_model=schemas.PDVSale)
+def update_sale_payment_method(
+    sale_id: int,
+    data: schemas.PDVSalePaymentMethodUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Corrigir o método de pagamento de uma venda."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    return controller.update_sale_payment_method(db, sale_id, data.payment_method_id, terminal.id, current_user.id)
+
 # ===================================================================
 # Dashboard Endpoints
 # ===================================================================

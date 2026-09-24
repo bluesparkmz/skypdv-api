@@ -641,6 +641,11 @@ class PDVSaleVoid(BaseModel):
     refund_to_wallet: bool = False  # Se deve devolver para SkyWallet
 
 
+class PDVSalePaymentMethodUpdate(BaseModel):
+    """Método de pagamento corrigido por um administrador."""
+    payment_method_id: int = Field(..., gt=0)
+
+
 class PDVInvoiceCustomerCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     nuit: Optional[str] = Field(default=None, max_length=64)
