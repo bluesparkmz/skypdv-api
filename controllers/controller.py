@@ -6081,9 +6081,8 @@ def close_account(db: Session, account_id: int, data: schemas.PDVAccountClose, u
     if not account.items:
         raise HTTPException(status_code=400, detail="Account has no products")
 
-    payment_method_value = data.payment_method.value if hasattr(data.payment_method, "value") else str(data.payment_method)
-    if payment_method_value == "pos":
-        payment_method_value = "card"
+    resolved_pm = resolve_payment_method(db, terminal.id, data.payment_method_id, data.payment_method)
+    payment_method_value = resolved_pm.name
 
     amount_paid = data.amount_paid
     if amount_paid < account.current_balance:
@@ -6107,6 +6106,7 @@ def close_account(db: Session, account_id: int, data: schemas.PDVAccountClose, u
             items=sale_items,
             customer_name=account.client_name,
             customer_phone=account.client_phone,
+            payment_method_id=resolved_pm.id,
             payment_method=payment_method_value,
             amount_paid=amount_paid,
             notes=account.notes or f"Conta #{account.id}",

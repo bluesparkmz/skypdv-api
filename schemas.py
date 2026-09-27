@@ -721,7 +721,8 @@ class PDVAccountUpdate(BaseModel):
 
 
 class PDVAccountClose(BaseModel):
-    payment_method: PaymentMethodEnum
+    payment_method_id: Optional[int] = None
+    payment_method: Optional[str] = None
     amount_paid: Decimal
     change_status: str = "not_given"
 
