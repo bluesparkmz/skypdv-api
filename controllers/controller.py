@@ -3615,12 +3615,10 @@ def update_sale_items(db: Session, sale_id: int, sale_data: schemas.PDVSaleItems
     sale = db.query(PDVSale).filter(PDVSale.id == sale_id, PDVSale.terminal_id == terminal_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Sale not found")
-    if not is_terminal_admin(db, terminal_id, user_id) and sale.created_by != user_id:
-        raise HTTPException(status_code=403, detail="Only the sale operator or an admin can adjust sale items")
+    if not is_terminal_admin(db, terminal_id, user_id):
+        raise HTTPException(status_code=403, detail="Only admin can adjust sale items")
     if sale.status in {"voided", "cancelled"}:
         raise HTTPException(status_code=400, detail="Cannot adjust a voided sale")
-    if sale.cash_register and sale.cash_register.status != "open":
-        raise HTTPException(status_code=400, detail="Cannot adjust items after the cash register is closed")
 
     terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
     previous_items = list(sale.items)
@@ -3734,7 +3732,7 @@ def update_sale_items(db: Session, sale_id: int, sale_data: schemas.PDVSaleItems
     sale.change_amount = max(Decimal("0.00"), Decimal(str(sale.amount_paid or 0)) - total)
 
     register = sale.cash_register
-    if register and register.status == "open" and total_difference:
+    if register and total_difference:
         register.total_sales = Decimal(str(register.total_sales or 0)) + total_difference
         payment_key = (sale.payment_method or "").strip().lower()
         if payment_key in {"cash", "dinheiro", "numerario"}:
@@ -3745,6 +3743,10 @@ def update_sale_items(db: Session, sale_id: int, sale_data: schemas.PDVSaleItems
             register.total_skywallet = Decimal(str(register.total_skywallet or 0)) + total_difference
         elif payment_key in {"mpesa", "m-pesa"}:
             register.total_mpesa = Decimal(str(register.total_mpesa or 0)) + total_difference
+        if register.status != "open":
+            register.expected_amount = _calculate_register_expected(register)
+            if register.closing_amount is not None:
+                register.difference = Decimal(str(register.closing_amount)) - register.expected_amount
 
     db.commit()
     db.refresh(sale)
@@ -3755,13 +3757,13 @@ def update_sale_payment_method(db: Session, sale_id: int, payment_method_id: int
     sale = db.query(PDVSale).filter(PDVSale.id == sale_id, PDVSale.terminal_id == terminal_id).first()
     if not sale:
         raise HTTPException(status_code=404, detail="Sale not found")
-    if not is_terminal_admin(db, terminal_id, user_id) and sale.created_by != user_id:
-        raise HTTPException(status_code=403, detail="Only the sale operator or an admin can adjust its payment method")
+    if not is_terminal_admin(db, terminal_id, user_id):
+        raise HTTPException(status_code=403, detail="Only admin can adjust its payment method")
     if sale.status in {"voided", "cancelled"}:
         raise HTTPException(status_code=400, detail="Cannot adjust a voided sale")
 
     payment_method = resolve_payment_method(db, terminal_id, payment_method_id, None)
-    if sale.cash_register and sale.cash_register.status == "open":
+    if sale.cash_register:
         def register_total_field(method_name: str) -> Optional[str]:
             key = (method_name or "").strip().lower().replace("-", "").replace(" ", "")
             if key in {"cash", "dinheiro", "numerario"}:
