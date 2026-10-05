@@ -1254,45 +1254,31 @@ class PDVServiceSummary(BaseModel):
     mixed_revenue: Decimal
 
 
-class FornecimentoMovementLine(BaseModel):
-    """Linha de fornecimento (entrada de stock) num dia"""
-    movement_id: int
+class FornecimentoRow(BaseModel):
+    """Linha unificada: produto fornecido e/ou cadastrado no dia"""
     product_id: int
     product_name: str
     product_sku: Optional[str] = None
     category: Optional[str] = None
-    quantity: Decimal
-    quantity_before: Optional[Decimal] = None
-    quantity_after: Optional[Decimal] = None
-    balance: Decimal  # saldo actual (inventário)
+    kind: str  # "fornecimento" | "cadastro" | "ambos"
+    quantity: Decimal  # qtd fornecida no dia (entradas)
+    unit_price: Decimal  # preço de venda
+    line_total: Decimal  # quantity * unit_price
+    balance: Decimal  # saldo actual em stock
+    balance_value: Decimal  # balance * unit_price
     notes: Optional[str] = None
-    created_by: Optional[int] = None
-    created_at: datetime
-
-
-class FornecimentoProductCreated(BaseModel):
-    """Produto cadastrado no dia"""
-    product_id: int
-    product_name: str
-    product_sku: Optional[str] = None
-    category: Optional[str] = None
-    cost_price: Decimal
-    price: Decimal
-    initial_stock: Optional[Decimal] = None
-    balance: Decimal
     created_at: datetime
 
 
 class FornecimentosReport(BaseModel):
-    """Extrato de fornecimentos de um dia"""
+    """Extrato de fornecimentos de um dia (tabela única)"""
     date: str  # YYYY-MM-DD (calendário Moçambique)
-    supplies_count: int
-    products_supplied_count: int
-    total_qty_supplied: Decimal
-    total_cost_value: Decimal
-    products_created_count: int
-    movements: List[FornecimentoMovementLine] = []
-    products_created: List[FornecimentoProductCreated] = []
+    products_count: int
+    total_qty: Decimal
+    total_value: Decimal  # soma quantity * preço
+    total_balance: Decimal  # soma saldos (qtd)
+    total_balance_value: Decimal  # soma saldo * preço
+    rows: List[FornecimentoRow] = []
 
 
 

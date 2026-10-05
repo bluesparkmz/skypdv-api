@@ -3823,10 +3823,10 @@ def _product_balance(db: Session, terminal_id: int, product_id: int) -> Decimal:
 
 def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[datetime] = None) -> schemas.FornecimentosReport:
     """
-    Extrato de fornecimentos do dia:
-    - entradas de stock (movement_type=in)
-    - produtos cadastrados no mesmo dia
-    - saldo actual por produto
+    Extrato unificado do dia:
+    - entradas de stock (fornecimentos)
+    - produtos cadastrados
+    - valor = quantidade × preço de venda (não cost_price)
     """
     report_day = day or datetime.utcnow()
     utc_start, utc_end, date_str = _day_bounds_mozambique_to_utc(report_day)
@@ -3851,71 +3851,98 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
         .all()
     )
 
-    balance_cache: dict = {}
-    movements = []
-    total_qty = Decimal("0")
-    total_cost = Decimal("0")
-    supplied_ids = set()
+    # Agregar por produto
+    agg: dict = {}
+
+    def _ensure(pid: int, product: PDVProduct, when: datetime):
+        if pid not in agg:
+            price = Decimal(str(product.price or 0))
+            balance = _product_balance(db, terminal_id, pid)
+            agg[pid] = {
+                "product": product,
+                "qty": Decimal("0"),
+                "supplied": False,
+                "created": False,
+                "notes": [],
+                "created_at": when,
+                "unit_price": price,
+                "balance": balance,
+            }
+        return agg[pid]
 
     for mov, product in movement_rows:
-        pid = product.id
-        if pid not in balance_cache:
-            balance_cache[pid] = _product_balance(db, terminal_id, pid)
-        qty = Decimal(str(mov.quantity or 0))
-        cost = Decimal(str(product.cost_price or 0)) * qty
-        total_qty += qty
-        total_cost += cost
-        supplied_ids.add(pid)
-        movements.append(
-            schemas.FornecimentoMovementLine(
-                movement_id=mov.id,
-                product_id=pid,
-                product_name=product.name,
-                product_sku=product.sku,
-                category=product.category,
-                quantity=qty,
-                quantity_before=mov.quantity_before,
-                quantity_after=mov.quantity_after,
-                balance=balance_cache[pid],
-                notes=mov.notes,
-                created_by=mov.created_by,
-                created_at=mov.created_at,
-            )
-        )
+        row = _ensure(product.id, product, mov.created_at)
+        row["qty"] += Decimal(str(mov.quantity or 0))
+        row["supplied"] = True
+        if mov.notes:
+            row["notes"].append(str(mov.notes))
+        # manter a hora da entrada mais recente
+        if mov.created_at and (not row["created_at"] or mov.created_at > row["created_at"]):
+            row["created_at"] = mov.created_at
 
-    products_created = []
     for product in created_products:
-        pid = product.id
-        if pid not in balance_cache:
-            balance_cache[pid] = _product_balance(db, terminal_id, pid)
-        initial = None
-        for mov, prod in movement_rows:
-            if prod.id == pid and "initial" in (mov.notes or "").lower():
-                initial = Decimal(str(mov.quantity or 0))
-                break
-        products_created.append(
-            schemas.FornecimentoProductCreated(
+        row = _ensure(product.id, product, product.created_at)
+        row["created"] = True
+        if not row["supplied"]:
+            # cadastro sem entrada explícita: usar stock inicial se existir, senão 0
+            # (saldo actual continua em balance)
+            pass
+
+    rows: list[schemas.FornecimentoRow] = []
+    total_qty = Decimal("0")
+    total_value = Decimal("0")
+    total_balance = Decimal("0")
+    total_balance_value = Decimal("0")
+
+    for pid, data in sorted(agg.items(), key=lambda item: item[1]["created_at"] or datetime.min, reverse=True):
+        product = data["product"]
+        qty = data["qty"]
+        price = data["unit_price"]
+        balance = data["balance"]
+        line_total = (qty * price).quantize(Decimal("0.01"))
+        balance_value = (balance * price).quantize(Decimal("0.01"))
+        if data["supplied"] and data["created"]:
+            kind = "ambos"
+        elif data["supplied"]:
+            kind = "fornecimento"
+        else:
+            kind = "cadastro"
+            # produto só cadastrado: valor do dia = saldo * preço se ainda não houve entrada
+            if qty <= 0 and balance > 0:
+                qty = balance
+                line_total = balance_value
+
+        total_qty += qty
+        total_value += line_total
+        total_balance += balance
+        total_balance_value += balance_value
+
+        note = " · ".join(dict.fromkeys(data["notes"]))[:120] if data["notes"] else None
+        rows.append(
+            schemas.FornecimentoRow(
                 product_id=pid,
                 product_name=product.name,
                 product_sku=product.sku,
                 category=product.category,
-                cost_price=Decimal(str(product.cost_price or 0)),
-                price=Decimal(str(product.price or 0)),
-                initial_stock=initial,
-                balance=balance_cache[pid],
-                created_at=product.created_at,
+                kind=kind,
+                quantity=qty,
+                unit_price=price,
+                line_total=line_total,
+                balance=balance,
+                balance_value=balance_value,
+                notes=note,
+                created_at=data["created_at"],
             )
         )
 
     return schemas.FornecimentosReport(
         date=date_str,
-        supplies_count=len(movements),
-        products_supplied_count=len(supplied_ids),
-        total_qty_supplied=total_qty,
-        total_cost_value=total_cost.quantize(Decimal("0.01")),
-        products_created_count=len(products_created),
-        movements=movements,
-        products_created=products_created,
+        products_count=len(rows),
+        total_qty=total_qty,
+        total_value=total_value.quantize(Decimal("0.01")),
+        total_balance=total_balance,
+        total_balance_value=total_balance_value.quantize(Decimal("0.01")),
+        rows=rows,
     )
 
 

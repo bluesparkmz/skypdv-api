@@ -2987,60 +2987,51 @@ def get_fornecimentos_report_pdf(
     story.append(Paragraph(f"<b>{store_name}</b>", styles["Title"]))
     story.append(Paragraph(f"Extrato de Fornecimentos — {report.date}", styles["Heading2"]))
     story.append(Paragraph(
-        f"Entradas: {report.supplies_count} · Produtos fornecidos: {report.products_supplied_count} · "
-        f"Qtd total: {_fmt_qty(report.total_qty_supplied)} · Custo: {_fmt_money(report.total_cost_value)} MT · "
-        f"Cadastrados: {report.products_created_count}",
+        f"Produtos: {report.products_count} · Qtd: {_fmt_qty(report.total_qty)} · "
+        f"Valor: {_fmt_money(report.total_value)} MT · "
+        f"Saldo: {_fmt_qty(report.total_balance)} · "
+        f"Valor do saldo: {_fmt_money(report.total_balance_value)} MT",
         styles["Normal"],
     ))
     story.append(Spacer(1, 12))
 
-    if report.movements:
-        story.append(Paragraph("<b>Produtos fornecidos (entradas)</b>", styles["Heading3"]))
-        data = [["Hora", "Produto", "Qtd", "Saldo", "Notas"]]
-        for line in report.movements:
+    if report.rows:
+        data = [["Hora", "Tipo", "Produto", "Qtd", "Preço", "Total", "Saldo"]]
+        kind_label = {"fornecimento": "Forn.", "cadastro": "Cad.", "ambos": "F+C"}
+        for line in report.rows:
             data.append([
                 _fmt_time(line.created_at),
-                (line.product_name or "")[:40],
+                kind_label.get(line.kind, line.kind),
+                (line.product_name or "")[:32],
                 _fmt_qty(line.quantity),
+                _fmt_money(line.unit_price),
+                _fmt_money(line.line_total),
                 _fmt_qty(line.balance),
-                (line.notes or "")[:36],
             ])
-        table = Table(data, colWidths=[50, 180, 50, 50, 160])
+        data.append([
+            "",
+            "",
+            "TOTAL",
+            _fmt_qty(report.total_qty),
+            "",
+            _fmt_money(report.total_value),
+            _fmt_qty(report.total_balance),
+        ])
+        table = Table(data, colWidths=[42, 36, 150, 42, 55, 60, 45])
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#673de6")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, -1), 8),
             ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f3ff")]),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f5f3ff")]),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#eee7ff")),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
         ]))
         story.append(table)
-        story.append(Spacer(1, 14))
-
-    if report.products_created:
-        story.append(Paragraph("<b>Produtos cadastrados no dia</b>", styles["Heading3"]))
-        data = [["Hora", "Produto", "Categoria", "Preço", "Saldo"]]
-        for line in report.products_created:
-            data.append([
-                _fmt_time(line.created_at),
-                (line.product_name or "")[:40],
-                (line.category or "")[:20],
-                _fmt_money(line.price),
-                _fmt_qty(line.balance),
-            ])
-        table = Table(data, colWidths=[50, 180, 90, 60, 50])
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3f4f6")]),
-        ]))
-        story.append(table)
-
-    if not report.movements and not report.products_created:
+    else:
         story.append(Paragraph("Sem fornecimentos nem cadastros neste dia.", styles["Normal"]))
 
     doc.build(story)
