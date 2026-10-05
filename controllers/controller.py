@@ -3797,6 +3797,128 @@ def get_stock_movements(db: Session, terminal_id: int, product_id: Optional[int]
         query = query.filter(PDVStockMovement.product_id == product_id)
     return query.order_by(desc(PDVStockMovement.created_at)).offset(skip).limit(limit).all()
 
+
+def _day_bounds_mozambique_to_utc(day: datetime) -> tuple:
+    """Converte um dia de calendário MZ para intervalo UTC (DB)."""
+    local = to_mozambique_datetime(day) or day
+    if local.tzinfo is None:
+        local = local.replace(tzinfo=MOZAMBIQUE_TIMEZONE)
+    local_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    local_end = local.replace(hour=23, minute=59, second=59, microsecond=999999)
+    date_str = local_start.strftime("%Y-%m-%d")
+    return mozambique_datetime_to_utc(local_start), mozambique_datetime_to_utc(local_end), date_str
+
+
+def _product_balance(db: Session, terminal_id: int, product_id: int) -> Decimal:
+    rows = (
+        db.query(PDVInventory)
+        .filter(PDVInventory.terminal_id == terminal_id, PDVInventory.product_id == product_id)
+        .all()
+    )
+    total = Decimal("0")
+    for inv in rows:
+        total += Decimal(str(inv.quantity or 0))
+    return total
+
+
+def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[datetime] = None) -> schemas.FornecimentosReport:
+    """
+    Extrato de fornecimentos do dia:
+    - entradas de stock (movement_type=in)
+    - produtos cadastrados no mesmo dia
+    - saldo actual por produto
+    """
+    report_day = day or datetime.utcnow()
+    utc_start, utc_end, date_str = _day_bounds_mozambique_to_utc(report_day)
+
+    movement_rows = (
+        db.query(PDVStockMovement, PDVProduct)
+        .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
+        .filter(PDVStockMovement.terminal_id == terminal_id)
+        .filter(PDVStockMovement.movement_type == MovementType.IN)
+        .filter(PDVStockMovement.created_at >= utc_start)
+        .filter(PDVStockMovement.created_at <= utc_end)
+        .order_by(PDVStockMovement.created_at.desc())
+        .all()
+    )
+
+    created_products = (
+        db.query(PDVProduct)
+        .filter(PDVProduct.terminal_id == terminal_id)
+        .filter(PDVProduct.created_at >= utc_start)
+        .filter(PDVProduct.created_at <= utc_end)
+        .order_by(PDVProduct.created_at.desc())
+        .all()
+    )
+
+    balance_cache: dict = {}
+    movements = []
+    total_qty = Decimal("0")
+    total_cost = Decimal("0")
+    supplied_ids = set()
+
+    for mov, product in movement_rows:
+        pid = product.id
+        if pid not in balance_cache:
+            balance_cache[pid] = _product_balance(db, terminal_id, pid)
+        qty = Decimal(str(mov.quantity or 0))
+        cost = Decimal(str(product.cost_price or 0)) * qty
+        total_qty += qty
+        total_cost += cost
+        supplied_ids.add(pid)
+        movements.append(
+            schemas.FornecimentoMovementLine(
+                movement_id=mov.id,
+                product_id=pid,
+                product_name=product.name,
+                product_sku=product.sku,
+                category=product.category,
+                quantity=qty,
+                quantity_before=mov.quantity_before,
+                quantity_after=mov.quantity_after,
+                balance=balance_cache[pid],
+                notes=mov.notes,
+                created_by=mov.created_by,
+                created_at=mov.created_at,
+            )
+        )
+
+    products_created = []
+    for product in created_products:
+        pid = product.id
+        if pid not in balance_cache:
+            balance_cache[pid] = _product_balance(db, terminal_id, pid)
+        initial = None
+        for mov, prod in movement_rows:
+            if prod.id == pid and "initial" in (mov.notes or "").lower():
+                initial = Decimal(str(mov.quantity or 0))
+                break
+        products_created.append(
+            schemas.FornecimentoProductCreated(
+                product_id=pid,
+                product_name=product.name,
+                product_sku=product.sku,
+                category=product.category,
+                cost_price=Decimal(str(product.cost_price or 0)),
+                price=Decimal(str(product.price or 0)),
+                initial_stock=initial,
+                balance=balance_cache[pid],
+                created_at=product.created_at,
+            )
+        )
+
+    return schemas.FornecimentosReport(
+        date=date_str,
+        supplies_count=len(movements),
+        products_supplied_count=len(supplied_ids),
+        total_qty_supplied=total_qty,
+        total_cost_value=total_cost.quantize(Decimal("0.01")),
+        products_created_count=len(products_created),
+        movements=movements,
+        products_created=products_created,
+    )
+
+
 def get_inventory_report(db: Session, terminal_id: int):
     """Gera um relatÃ³rio detalhado do inventÃ¡rio atual"""
     inventory_items = db.query(PDVInventory).filter(PDVInventory.terminal_id == terminal_id).all()

@@ -2919,6 +2919,137 @@ def get_finance_summary_pdf(
     return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
 
 
+@router.get("/reports/fornecimentos", response_model=schemas.FornecimentosReport)
+def get_fornecimentos_report(
+    date: Optional[str] = Query(None, description="Data YYYY-MM-DD (calendário Moçambique). Default: hoje."),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Extrato de fornecimentos (entradas + produtos cadastrados) de um dia."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    day = None
+    if date:
+        try:
+            day = datetime.strptime(date[:10], "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Data inválida. Usa YYYY-MM-DD.") from exc
+    return controller.get_fornecimentos_report(db, terminal.id, day)
+
+
+@router.get("/reports/fornecimentos.pdf")
+def get_fornecimentos_report_pdf(
+    date: Optional[str] = Query(None, description="Data YYYY-MM-DD (calendário Moçambique). Default: hoje."),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """PDF do extrato de fornecimentos do dia."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    day = None
+    if date:
+        try:
+            day = datetime.strptime(date[:10], "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Data inválida. Usa YYYY-MM-DD.") from exc
+
+    report = controller.get_fornecimentos_report(db, terminal.id, day)
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    def _fmt_qty(v) -> str:
+        try:
+            value = float(v or 0)
+        except Exception:
+            return str(v)
+        if value.is_integer():
+            return str(int(value))
+        return f"{value:.3f}".rstrip("0").rstrip(".") or "0"
+
+    def _fmt_money(v) -> str:
+        try:
+            return f"{float(v or 0):.2f}"
+        except Exception:
+            return str(v)
+
+    def _fmt_time(dt) -> str:
+        local_dt = controller.to_mozambique_datetime(dt)
+        if not local_dt:
+            return ""
+        return local_dt.strftime("%H:%M")
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    story = []
+    store_name = getattr(terminal, "name", None) or "SkyPDV"
+    story.append(Paragraph(f"<b>{store_name}</b>", styles["Title"]))
+    story.append(Paragraph(f"Extrato de Fornecimentos — {report.date}", styles["Heading2"]))
+    story.append(Paragraph(
+        f"Entradas: {report.supplies_count} · Produtos fornecidos: {report.products_supplied_count} · "
+        f"Qtd total: {_fmt_qty(report.total_qty_supplied)} · Custo: {_fmt_money(report.total_cost_value)} MT · "
+        f"Cadastrados: {report.products_created_count}",
+        styles["Normal"],
+    ))
+    story.append(Spacer(1, 12))
+
+    if report.movements:
+        story.append(Paragraph("<b>Produtos fornecidos (entradas)</b>", styles["Heading3"]))
+        data = [["Hora", "Produto", "Qtd", "Saldo", "Notas"]]
+        for line in report.movements:
+            data.append([
+                _fmt_time(line.created_at),
+                (line.product_name or "")[:40],
+                _fmt_qty(line.quantity),
+                _fmt_qty(line.balance),
+                (line.notes or "")[:36],
+            ])
+        table = Table(data, colWidths=[50, 180, 50, 50, 160])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#673de6")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f3ff")]),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        story.append(table)
+        story.append(Spacer(1, 14))
+
+    if report.products_created:
+        story.append(Paragraph("<b>Produtos cadastrados no dia</b>", styles["Heading3"]))
+        data = [["Hora", "Produto", "Categoria", "Preço", "Saldo"]]
+        for line in report.products_created:
+            data.append([
+                _fmt_time(line.created_at),
+                (line.product_name or "")[:40],
+                (line.category or "")[:20],
+                _fmt_money(line.price),
+                _fmt_qty(line.balance),
+            ])
+        table = Table(data, colWidths=[50, 180, 90, 60, 50])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3f4f6")]),
+        ]))
+        story.append(table)
+
+    if not report.movements and not report.products_created:
+        story.append(Paragraph("Sem fornecimentos nem cadastros neste dia.", styles["Normal"]))
+
+    doc.build(story)
+    pdf_bytes = buffer.getvalue()
+    filename = f"fornecimentos_{report.date.replace('-', '')}.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
+
+
 @router.get("/reports/stock-day.pdf")
 def get_stock_day_report_pdf(
     date: Optional[datetime] = None,

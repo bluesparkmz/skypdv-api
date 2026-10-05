@@ -1254,4 +1254,45 @@ class PDVServiceSummary(BaseModel):
     mixed_revenue: Decimal
 
 
+class FornecimentoMovementLine(BaseModel):
+    """Linha de fornecimento (entrada de stock) num dia"""
+    movement_id: int
+    product_id: int
+    product_name: str
+    product_sku: Optional[str] = None
+    category: Optional[str] = None
+    quantity: Decimal
+    quantity_before: Optional[Decimal] = None
+    quantity_after: Optional[Decimal] = None
+    balance: Decimal  # saldo actual (inventário)
+    notes: Optional[str] = None
+    created_by: Optional[int] = None
+    created_at: datetime
+
+
+class FornecimentoProductCreated(BaseModel):
+    """Produto cadastrado no dia"""
+    product_id: int
+    product_name: str
+    product_sku: Optional[str] = None
+    category: Optional[str] = None
+    cost_price: Decimal
+    price: Decimal
+    initial_stock: Optional[Decimal] = None
+    balance: Decimal
+    created_at: datetime
+
+
+class FornecimentosReport(BaseModel):
+    """Extrato de fornecimentos de um dia"""
+    date: str  # YYYY-MM-DD (calendário Moçambique)
+    supplies_count: int
+    products_supplied_count: int
+    total_qty_supplied: Decimal
+    total_cost_value: Decimal
+    products_created_count: int
+    movements: List[FornecimentoMovementLine] = []
+    products_created: List[FornecimentoProductCreated] = []
+
+
 
