@@ -3891,8 +3891,6 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
     rows: list[schemas.FornecimentoRow] = []
     total_qty = Decimal("0")
     total_value = Decimal("0")
-    total_balance = Decimal("0")
-    total_balance_value = Decimal("0")
 
     for pid, data in sorted(agg.items(), key=lambda item: item[1]["created_at"] or datetime.min, reverse=True):
         product = data["product"]
@@ -3914,8 +3912,6 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
 
         total_qty += qty
         total_value += line_total
-        total_balance += balance
-        total_balance_value += balance_value
 
         note = " · ".join(dict.fromkeys(data["notes"]))[:120] if data["notes"] else None
         rows.append(
@@ -3940,8 +3936,8 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
         products_count=len(rows),
         total_qty=total_qty,
         total_value=total_value.quantize(Decimal("0.01")),
-        total_balance=total_balance,
-        total_balance_value=total_balance_value.quantize(Decimal("0.01")),
+        total_balance=Decimal("0"),
+        total_balance_value=Decimal("0"),
         rows=rows,
     )
 

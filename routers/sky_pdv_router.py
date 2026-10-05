@@ -2988,36 +2988,32 @@ def get_fornecimentos_report_pdf(
     story.append(Paragraph(f"Extrato de Fornecimentos — {report.date}", styles["Heading2"]))
     story.append(Paragraph(
         f"Produtos: {report.products_count} · Qtd: {_fmt_qty(report.total_qty)} · "
-        f"Valor: {_fmt_money(report.total_value)} MT · "
-        f"Saldo: {_fmt_qty(report.total_balance)} · "
-        f"Valor do saldo: {_fmt_money(report.total_balance_value)} MT",
+        f"Valor do dia: {_fmt_money(report.total_value)} MT",
         styles["Normal"],
     ))
     story.append(Spacer(1, 12))
 
     if report.rows:
-        data = [["Hora", "Tipo", "Produto", "Qtd", "Preço", "Total", "Saldo"]]
+        data = [["Hora", "Tipo", "Produto", "Qtd", "Preço", "Total"]]
         kind_label = {"fornecimento": "Forn.", "cadastro": "Cad.", "ambos": "F+C"}
         for line in report.rows:
             data.append([
                 _fmt_time(line.created_at),
                 kind_label.get(line.kind, line.kind),
-                (line.product_name or "")[:32],
+                (line.product_name or "")[:36],
                 _fmt_qty(line.quantity),
                 _fmt_money(line.unit_price),
                 _fmt_money(line.line_total),
-                _fmt_qty(line.balance),
             ])
         data.append([
             "",
             "",
-            "TOTAL",
+            "TOTAL DO DIA",
             _fmt_qty(report.total_qty),
             "",
             _fmt_money(report.total_value),
-            _fmt_qty(report.total_balance),
         ])
-        table = Table(data, colWidths=[42, 36, 150, 42, 55, 60, 45])
+        table = Table(data, colWidths=[42, 36, 190, 48, 60, 70])
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f3f4f6")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#111827")),
