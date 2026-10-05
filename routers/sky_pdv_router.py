@@ -3019,16 +3019,17 @@ def get_fornecimentos_report_pdf(
         ])
         table = Table(data, colWidths=[42, 36, 150, 42, 55, 60, 45])
         table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#673de6")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f3f4f6")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#111827")),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f5f3ff")]),
-            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#eee7ff")),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#d1d5db")),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f9fafb")),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]))
         story.append(table)
     else:
