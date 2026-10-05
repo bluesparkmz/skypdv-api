@@ -2995,7 +2995,7 @@ def get_fornecimentos_report_pdf(
 
     if report.rows:
         data = [["Hora", "Tipo", "Produto", "Qtd", "Preço", "Total"]]
-        kind_label = {"fornecimento": "Forn.", "cadastro": "Cad.", "ambos": "F+C"}
+        kind_label = {"fornecimento": "Entrada", "cadastro": "Cadastro", "ambos": "Entrada"}
         for line in report.rows:
             data.append([
                 _fmt_time(line.created_at),

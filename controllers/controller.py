@@ -3878,14 +3878,22 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
         return agg[pid]
 
     def _movement_supply_qty(mov: PDVStockMovement) -> Optional[Decimal]:
-        """Quantidade fornecida neste movimento (só aumentos de stock)."""
+        """
+        Só o aumento de stock deste movimento.
+        Ex.: tinha 10, passou a 90 → conta 80 (não o stock total).
+        """
+        before = mov.quantity_before
+        after = mov.quantity_after
+        if before is not None and after is not None:
+            delta = Decimal(str(after)) - Decimal(str(before))
+            return delta if delta > 0 else None
+
         raw = Decimal(str(mov.quantity or 0))
         mt = mov.movement_type
         mt_val = mt.value if hasattr(mt, "value") else str(mt)
         if mt_val in (MovementType.IN.value, MovementType.RETURN.value, "in", "return"):
-            return abs(raw)
+            return abs(raw) if raw != 0 else None
         if mt_val in (MovementType.ADJUSTMENT.value, "adjustment"):
-            # delta positivo = aumentou stock (fornecimento / edição de qtd)
             return raw if raw > 0 else None
         return None
 
@@ -3916,16 +3924,12 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
         balance = data["balance"]
         line_total = (qty * price).quantize(Decimal("0.01"))
         balance_value = (balance * price).quantize(Decimal("0.01"))
-        if data["supplied"] and data["created"]:
-            kind = "ambos"
-        elif data["supplied"]:
+        # Tipo simples: Entrada (aumentou stock) ou Cadastro (novo, sem entrada)
+        if data["supplied"]:
             kind = "fornecimento"
         else:
             kind = "cadastro"
-            # só cadastrado hoje, sem movimento: usar stock inicial do dia
-            if qty <= 0 and balance > 0:
-                qty = balance
-                line_total = balance_value
+            # nunca usar stock total — sem movimento de aumento, qtd do dia = 0
 
         total_qty += qty
         total_value += line_total
