@@ -3824,18 +3824,25 @@ def _product_balance(db: Session, terminal_id: int, product_id: int) -> Decimal:
 def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[datetime] = None) -> schemas.FornecimentosReport:
     """
     Extrato unificado do dia:
-    - entradas de stock (fornecimentos)
-    - produtos cadastrados
+    - entradas de stock (IN / RETURN)
+    - aumentos de quantidade em produtos já cadastrados (ADJUSTMENT > 0)
+    - produtos cadastrados no dia
     - valor = quantidade × preço de venda (não cost_price)
     """
     report_day = day or datetime.utcnow()
     utc_start, utc_end, date_str = _day_bounds_mozambique_to_utc(report_day)
 
+    # Inclui IN + RETURN + ADJUSTMENT: ao editar quantidade num produto já
+    # cadastrado o PDV grava ADJUSTMENT (delta), não IN.
     movement_rows = (
         db.query(PDVStockMovement, PDVProduct)
         .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
         .filter(PDVStockMovement.terminal_id == terminal_id)
-        .filter(PDVStockMovement.movement_type == MovementType.IN)
+        .filter(
+            PDVStockMovement.movement_type.in_(
+                [MovementType.IN, MovementType.RETURN, MovementType.ADJUSTMENT]
+            )
+        )
         .filter(PDVStockMovement.created_at >= utc_start)
         .filter(PDVStockMovement.created_at <= utc_end)
         .order_by(PDVStockMovement.created_at.desc())
@@ -3870,23 +3877,33 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
             }
         return agg[pid]
 
+    def _movement_supply_qty(mov: PDVStockMovement) -> Optional[Decimal]:
+        """Quantidade fornecida neste movimento (só aumentos de stock)."""
+        raw = Decimal(str(mov.quantity or 0))
+        mt = mov.movement_type
+        mt_val = mt.value if hasattr(mt, "value") else str(mt)
+        if mt_val in (MovementType.IN.value, MovementType.RETURN.value, "in", "return"):
+            return abs(raw)
+        if mt_val in (MovementType.ADJUSTMENT.value, "adjustment"):
+            # delta positivo = aumentou stock (fornecimento / edição de qtd)
+            return raw if raw > 0 else None
+        return None
+
     for mov, product in movement_rows:
+        supply_qty = _movement_supply_qty(mov)
+        if supply_qty is None or supply_qty <= 0:
+            continue
         row = _ensure(product.id, product, mov.created_at)
-        row["qty"] += Decimal(str(mov.quantity or 0))
+        row["qty"] += supply_qty
         row["supplied"] = True
         if mov.notes:
             row["notes"].append(str(mov.notes))
-        # manter a hora da entrada mais recente
         if mov.created_at and (not row["created_at"] or mov.created_at > row["created_at"]):
             row["created_at"] = mov.created_at
 
     for product in created_products:
         row = _ensure(product.id, product, product.created_at)
         row["created"] = True
-        if not row["supplied"]:
-            # cadastro sem entrada explícita: usar stock inicial se existir, senão 0
-            # (saldo actual continua em balance)
-            pass
 
     rows: list[schemas.FornecimentoRow] = []
     total_qty = Decimal("0")
@@ -3905,7 +3922,7 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
             kind = "fornecimento"
         else:
             kind = "cadastro"
-            # produto só cadastrado: valor do dia = saldo * preço se ainda não houve entrada
+            # só cadastrado hoje, sem movimento: usar stock inicial do dia
             if qty <= 0 and balance > 0:
                 qty = balance
                 line_total = balance_value
