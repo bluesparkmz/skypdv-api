@@ -3874,8 +3874,21 @@ def _get_inventory_for_movement(
     raise HTTPException(status_code=404, detail="Inventário do produto não encontrado")
 
 
+def _is_supply_movement_type(movement: PDVStockMovement) -> bool:
+    mt = movement.movement_type
+    mt_val = mt.value if hasattr(mt, "value") else str(mt)
+    return mt_val in (
+        MovementType.IN.value,
+        MovementType.RETURN.value,
+        MovementType.ADJUSTMENT.value,
+        "in",
+        "return",
+        "adjustment",
+    )
+
+
 def _get_editable_supply_movement(
-    db: Session, movement_id: int, terminal_id: int
+    db: Session, movement_id: int, terminal_id: int, *, allow_zero: bool = False
 ) -> tuple[PDVStockMovement, Decimal]:
     movement = (
         db.query(PDVStockMovement)
@@ -3885,20 +3898,15 @@ def _get_editable_supply_movement(
     if not movement:
         raise HTTPException(status_code=404, detail="Fornecimento não encontrado")
 
-    mt = movement.movement_type
-    mt_val = mt.value if hasattr(mt, "value") else str(mt)
-    if mt_val not in (
-        MovementType.IN.value,
-        MovementType.RETURN.value,
-        MovementType.ADJUSTMENT.value,
-        "in",
-        "return",
-        "adjustment",
-    ):
+    if not _is_supply_movement_type(movement):
         raise HTTPException(status_code=400, detail="Este movimento não é um fornecimento editável")
 
     supply_qty = _movement_supply_qty(movement)
-    if supply_qty is None or supply_qty <= 0:
+    if supply_qty is None:
+        supply_qty = Decimal("0")
+    if supply_qty < 0:
+        supply_qty = Decimal("0")
+    if supply_qty == 0 and not allow_zero:
         raise HTTPException(status_code=400, detail="Este movimento não tem quantidade de entrada para editar")
 
     return movement, supply_qty
@@ -3959,28 +3967,30 @@ def delete_fornecimento_movement(
 ) -> dict:
     """
     Eliminar um fornecimento errado sem deixar rasto no extrato.
-    Remove sempre o movimento; o stock só baixa até zero (não bloqueia a eliminação).
+    Apaga o registo do movimento (não deixa linha a 0).
+    O stock só baixa até zero.
     """
-    movement, supply_qty = _get_editable_supply_movement(db, movement_id, terminal_id)
+    # allow_zero: limpa movimentos já zerados que ainda existam na BD
+    movement, supply_qty = _get_editable_supply_movement(
+        db, movement_id, terminal_id, allow_zero=True
+    )
     inventory = _get_inventory_for_movement(db, movement.product_id, terminal_id, movement.notes)
     product = db.query(PDVProduct).filter(PDVProduct.id == movement.product_id).first()
     product_id = movement.product_id
 
     qty_before_inv = Decimal(str(inventory.quantity or 0))
-    # Nunca impedir a eliminação: se já vendeu parte, baixa só o que ainda há em stock
-    reversed_qty = min(supply_qty, qty_before_inv)
+    reversed_qty = min(supply_qty, qty_before_inv) if supply_qty > 0 else Decimal("0")
     qty_after_inv = qty_before_inv - reversed_qty
 
-    inventory.quantity = qty_after_inv
-    inventory.updated_at = datetime.utcnow()
+    if reversed_qty > 0:
+        inventory.quantity = qty_after_inv
+        inventory.updated_at = datetime.utcnow()
+        if product:
+            _notify_stock_critical(db, product, inventory, qty_before_inv, qty_after_inv)
 
-    if product:
-        _notify_stock_critical(db, product, inventory, qty_before_inv, qty_after_inv)
-
-    # Apaga o movimento primeiro — some do relatório e dos totais
+    # Apaga o movimento — some da lista (não fica a quantidade 0)
     db.delete(movement)
     db.flush()
-
     db.commit()
     return {
         "message": "Fornecimento eliminado",
@@ -3992,17 +4002,12 @@ def delete_fornecimento_movement(
 
 def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[datetime] = None) -> schemas.FornecimentosReport:
     """
-    Extrato unificado do dia (1 linha por movimento de entrada):
-    - entradas de stock (IN / RETURN)
-    - aumentos de quantidade em produtos já cadastrados (ADJUSTMENT > 0)
-    - produtos cadastrados no dia sem entrada
-    - valor = quantidade × preço de venda (não cost_price)
+    Extrato do dia: só entradas reais com quantidade > 0.
+    Não lista cadastros a zero nem movimentos zerados (sem rasto fantasma).
     """
     report_day = day or datetime.utcnow()
     utc_start, utc_end, date_str = _day_bounds_mozambique_to_utc(report_day)
 
-    # Inclui IN + RETURN + ADJUSTMENT: ao editar quantidade num produto já
-    # cadastrado o PDV grava ADJUSTMENT (delta), não IN.
     movement_rows = (
         db.query(PDVStockMovement, PDVProduct)
         .join(PDVProduct, PDVProduct.id == PDVStockMovement.product_id)
@@ -4018,19 +4023,9 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
         .all()
     )
 
-    created_products = (
-        db.query(PDVProduct)
-        .filter(PDVProduct.terminal_id == terminal_id)
-        .filter(PDVProduct.created_at >= utc_start)
-        .filter(PDVProduct.created_at <= utc_end)
-        .order_by(PDVProduct.created_at.desc())
-        .all()
-    )
-
     rows: list[schemas.FornecimentoRow] = []
     total_qty = Decimal("0")
     total_value = Decimal("0")
-    supplied_product_ids: set[int] = set()
     balance_cache: dict[int, Decimal] = {}
 
     def _balance(pid: int) -> Decimal:
@@ -4040,6 +4035,7 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
 
     for mov, product in movement_rows:
         supply_qty = _movement_supply_qty(mov)
+        # Nunca mostrar quantidade 0 / movimentos fantasma
         if supply_qty is None or supply_qty <= 0:
             continue
         price = Decimal(str(product.price or 0))
@@ -4048,7 +4044,6 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
         balance_value = (balance * price).quantize(Decimal("0.01"))
         total_qty += supply_qty
         total_value += line_total
-        supplied_product_ids.add(product.id)
         rows.append(
             schemas.FornecimentoRow(
                 movement_id=mov.id,
@@ -4067,36 +4062,8 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
             )
         )
 
-    # Cadastros do dia sem entrada: mostram-se só para informação (qty/valor = 0).
-    # Não entram em total_qty / total_value.
-    for product in created_products:
-        if product.id in supplied_product_ids:
-            continue
-        price = Decimal(str(product.price or 0))
-        balance = _balance(product.id)
-        balance_value = (balance * price).quantize(Decimal("0.01"))
-        rows.append(
-            schemas.FornecimentoRow(
-                movement_id=None,
-                product_id=product.id,
-                product_name=product.name,
-                product_sku=product.sku,
-                category=product.category,
-                kind="cadastro",
-                quantity=Decimal("0"),
-                unit_price=price,
-                line_total=Decimal("0.00"),
-                balance=balance,
-                balance_value=balance_value,
-                notes=None,
-                created_at=product.created_at,
-            )
-        )
-
     rows.sort(key=lambda r: r.created_at or datetime.min, reverse=True)
-    # Contagem / totais só com entradas reais (fornecimentos), não cadastros a zero
-    supply_rows = [r for r in rows if r.kind == "fornecimento"]
-    unique_products = {r.product_id for r in supply_rows}
+    unique_products = {r.product_id for r in rows}
 
     return schemas.FornecimentosReport(
         date=date_str,
