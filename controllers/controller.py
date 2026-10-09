@@ -3821,12 +3821,174 @@ def _product_balance(db: Session, terminal_id: int, product_id: int) -> Decimal:
     return total
 
 
+def _movement_supply_qty(mov: PDVStockMovement) -> Optional[Decimal]:
+    """
+    Só o aumento de stock deste movimento.
+    Ex.: tinha 10, passou a 90 → conta 80 (não o stock total).
+    """
+    before = mov.quantity_before
+    after = mov.quantity_after
+    if before is not None and after is not None:
+        delta = Decimal(str(after)) - Decimal(str(before))
+        return delta if delta > 0 else None
+
+    raw = Decimal(str(mov.quantity or 0))
+    mt = mov.movement_type
+    mt_val = mt.value if hasattr(mt, "value") else str(mt)
+    if mt_val in (MovementType.IN.value, MovementType.RETURN.value, "in", "return"):
+        return abs(raw) if raw != 0 else None
+    if mt_val in (MovementType.ADJUSTMENT.value, "adjustment"):
+        return raw if raw > 0 else None
+    return None
+
+
+def _parse_storage_location_from_notes(notes: Optional[str]) -> str:
+    if not notes:
+        return PRIMARY_STOCK_LOCATION
+    # Formato típico: "Local: balcao. Fornecimento manual"
+    lower = notes.lower()
+    marker = "local:"
+    idx = lower.find(marker)
+    if idx < 0:
+        return PRIMARY_STOCK_LOCATION
+    rest = notes[idx + len(marker):].strip()
+    token = rest.split(".", 1)[0].strip().split()[0] if rest else ""
+    return token.lower() if token else PRIMARY_STOCK_LOCATION
+
+
+def _get_inventory_for_movement(
+    db: Session, product_id: int, terminal_id: int, notes: Optional[str]
+) -> PDVInventory:
+    location = _parse_storage_location_from_notes(notes)
+    inventory = db.query(PDVInventory).filter(
+        PDVInventory.product_id == product_id,
+        PDVInventory.terminal_id == terminal_id,
+        PDVInventory.storage_location == location,
+    ).first()
+    if inventory:
+        return inventory
+    # Fallback: inventário principal / qualquer local existente
+    inventory = get_primary_inventory(db, product_id, terminal_id, create_if_missing=True)
+    if inventory:
+        return inventory
+    raise HTTPException(status_code=404, detail="Inventário do produto não encontrado")
+
+
+def _get_editable_supply_movement(
+    db: Session, movement_id: int, terminal_id: int
+) -> tuple[PDVStockMovement, Decimal]:
+    movement = (
+        db.query(PDVStockMovement)
+        .filter(PDVStockMovement.id == movement_id, PDVStockMovement.terminal_id == terminal_id)
+        .first()
+    )
+    if not movement:
+        raise HTTPException(status_code=404, detail="Fornecimento não encontrado")
+
+    mt = movement.movement_type
+    mt_val = mt.value if hasattr(mt, "value") else str(mt)
+    if mt_val not in (
+        MovementType.IN.value,
+        MovementType.RETURN.value,
+        MovementType.ADJUSTMENT.value,
+        "in",
+        "return",
+        "adjustment",
+    ):
+        raise HTTPException(status_code=400, detail="Este movimento não é um fornecimento editável")
+
+    supply_qty = _movement_supply_qty(movement)
+    if supply_qty is None or supply_qty <= 0:
+        raise HTTPException(status_code=400, detail="Este movimento não tem quantidade de entrada para editar")
+
+    return movement, supply_qty
+
+
+def update_fornecimento_movement(
+    db: Session,
+    movement_id: int,
+    new_quantity: Decimal,
+    terminal_id: int,
+    user_id: int,
+) -> PDVStockMovement:
+    """Alterar a quantidade de um fornecimento e corrigir o stock."""
+    if new_quantity <= 0:
+        raise HTTPException(status_code=400, detail="A quantidade deve ser maior que zero")
+
+    movement, old_qty = _get_editable_supply_movement(db, movement_id, terminal_id)
+    if new_quantity == old_qty:
+        return movement
+
+    inventory = _get_inventory_for_movement(db, movement.product_id, terminal_id, movement.notes)
+    product = db.query(PDVProduct).filter(PDVProduct.id == movement.product_id).first()
+    qty_before_inv = Decimal(str(inventory.quantity or 0))
+    delta = new_quantity - old_qty
+    qty_after_inv = qty_before_inv + delta
+    if qty_after_inv < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Stock insuficiente para reduzir esta quantidade de fornecimento",
+        )
+
+    inventory.quantity = qty_after_inv
+    inventory.updated_at = datetime.utcnow()
+
+    # Actualiza o registo do movimento para reflectir a nova quantidade fornecida
+    before = Decimal(str(movement.quantity_before)) if movement.quantity_before is not None else (qty_before_inv - old_qty)
+    movement.quantity_before = before
+    movement.quantity_after = before + new_quantity
+    mt = movement.movement_type
+    mt_val = mt.value if hasattr(mt, "value") else str(mt)
+    if mt_val in (MovementType.ADJUSTMENT.value, "adjustment"):
+        movement.quantity = new_quantity
+    else:
+        movement.quantity = new_quantity
+    note_suffix = f" [editado por user {user_id}]"
+    if movement.notes and note_suffix not in movement.notes:
+        movement.notes = f"{movement.notes}{note_suffix}"
+    elif not movement.notes:
+        movement.notes = f"Fornecimento editado{note_suffix}"
+
+    if product:
+        _notify_stock_critical(db, product, inventory, qty_before_inv, qty_after_inv)
+    db.commit()
+    db.refresh(movement)
+    return movement
+
+
+def delete_fornecimento_movement(
+    db: Session, movement_id: int, terminal_id: int, user_id: int
+) -> dict:
+    """Eliminar um fornecimento errado e reverter a quantidade no stock."""
+    movement, supply_qty = _get_editable_supply_movement(db, movement_id, terminal_id)
+    inventory = _get_inventory_for_movement(db, movement.product_id, terminal_id, movement.notes)
+    product = db.query(PDVProduct).filter(PDVProduct.id == movement.product_id).first()
+
+    qty_before_inv = Decimal(str(inventory.quantity or 0))
+    qty_after_inv = qty_before_inv - supply_qty
+    if qty_after_inv < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Stock insuficiente para eliminar este fornecimento (já foi vendido/saído)",
+        )
+
+    inventory.quantity = qty_after_inv
+    inventory.updated_at = datetime.utcnow()
+
+    if product:
+        _notify_stock_critical(db, product, inventory, qty_before_inv, qty_after_inv)
+
+    db.delete(movement)
+    db.commit()
+    return {"message": "Fornecimento eliminado", "reversed_qty": str(supply_qty)}
+
+
 def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[datetime] = None) -> schemas.FornecimentosReport:
     """
-    Extrato unificado do dia:
+    Extrato unificado do dia (1 linha por movimento de entrada):
     - entradas de stock (IN / RETURN)
     - aumentos de quantidade em produtos já cadastrados (ADJUSTMENT > 0)
-    - produtos cadastrados no dia
+    - produtos cadastrados no dia sem entrada
     - valor = quantidade × preço de venda (não cost_price)
     """
     report_day = day or datetime.utcnow()
@@ -3858,103 +4020,76 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
         .all()
     )
 
-    # Agregar por produto
-    agg: dict = {}
+    rows: list[schemas.FornecimentoRow] = []
+    total_qty = Decimal("0")
+    total_value = Decimal("0")
+    supplied_product_ids: set[int] = set()
+    balance_cache: dict[int, Decimal] = {}
 
-    def _ensure(pid: int, product: PDVProduct, when: datetime):
-        if pid not in agg:
-            price = Decimal(str(product.price or 0))
-            balance = _product_balance(db, terminal_id, pid)
-            agg[pid] = {
-                "product": product,
-                "qty": Decimal("0"),
-                "supplied": False,
-                "created": False,
-                "notes": [],
-                "created_at": when,
-                "unit_price": price,
-                "balance": balance,
-            }
-        return agg[pid]
-
-    def _movement_supply_qty(mov: PDVStockMovement) -> Optional[Decimal]:
-        """
-        Só o aumento de stock deste movimento.
-        Ex.: tinha 10, passou a 90 → conta 80 (não o stock total).
-        """
-        before = mov.quantity_before
-        after = mov.quantity_after
-        if before is not None and after is not None:
-            delta = Decimal(str(after)) - Decimal(str(before))
-            return delta if delta > 0 else None
-
-        raw = Decimal(str(mov.quantity or 0))
-        mt = mov.movement_type
-        mt_val = mt.value if hasattr(mt, "value") else str(mt)
-        if mt_val in (MovementType.IN.value, MovementType.RETURN.value, "in", "return"):
-            return abs(raw) if raw != 0 else None
-        if mt_val in (MovementType.ADJUSTMENT.value, "adjustment"):
-            return raw if raw > 0 else None
-        return None
+    def _balance(pid: int) -> Decimal:
+        if pid not in balance_cache:
+            balance_cache[pid] = _product_balance(db, terminal_id, pid)
+        return balance_cache[pid]
 
     for mov, product in movement_rows:
         supply_qty = _movement_supply_qty(mov)
         if supply_qty is None or supply_qty <= 0:
             continue
-        row = _ensure(product.id, product, mov.created_at)
-        row["qty"] += supply_qty
-        row["supplied"] = True
-        if mov.notes:
-            row["notes"].append(str(mov.notes))
-        if mov.created_at and (not row["created_at"] or mov.created_at > row["created_at"]):
-            row["created_at"] = mov.created_at
-
-    for product in created_products:
-        row = _ensure(product.id, product, product.created_at)
-        row["created"] = True
-
-    rows: list[schemas.FornecimentoRow] = []
-    total_qty = Decimal("0")
-    total_value = Decimal("0")
-
-    for pid, data in sorted(agg.items(), key=lambda item: item[1]["created_at"] or datetime.min, reverse=True):
-        product = data["product"]
-        qty = data["qty"]
-        price = data["unit_price"]
-        balance = data["balance"]
-        line_total = (qty * price).quantize(Decimal("0.01"))
+        price = Decimal(str(product.price or 0))
+        balance = _balance(product.id)
+        line_total = (supply_qty * price).quantize(Decimal("0.01"))
         balance_value = (balance * price).quantize(Decimal("0.01"))
-        # Tipo simples: Entrada (aumentou stock) ou Cadastro (novo, sem entrada)
-        if data["supplied"]:
-            kind = "fornecimento"
-        else:
-            kind = "cadastro"
-            # nunca usar stock total — sem movimento de aumento, qtd do dia = 0
-
-        total_qty += qty
+        total_qty += supply_qty
         total_value += line_total
-
-        note = " · ".join(dict.fromkeys(data["notes"]))[:120] if data["notes"] else None
+        supplied_product_ids.add(product.id)
         rows.append(
             schemas.FornecimentoRow(
-                product_id=pid,
+                movement_id=mov.id,
+                product_id=product.id,
                 product_name=product.name,
                 product_sku=product.sku,
                 category=product.category,
-                kind=kind,
-                quantity=qty,
+                kind="fornecimento",
+                quantity=supply_qty,
                 unit_price=price,
                 line_total=line_total,
                 balance=balance,
                 balance_value=balance_value,
-                notes=note,
-                created_at=data["created_at"],
+                notes=(str(mov.notes)[:120] if mov.notes else None),
+                created_at=mov.created_at,
             )
         )
 
+    for product in created_products:
+        if product.id in supplied_product_ids:
+            continue
+        price = Decimal(str(product.price or 0))
+        balance = _balance(product.id)
+        balance_value = (balance * price).quantize(Decimal("0.01"))
+        rows.append(
+            schemas.FornecimentoRow(
+                movement_id=None,
+                product_id=product.id,
+                product_name=product.name,
+                product_sku=product.sku,
+                category=product.category,
+                kind="cadastro",
+                quantity=Decimal("0"),
+                unit_price=price,
+                line_total=Decimal("0.00"),
+                balance=balance,
+                balance_value=balance_value,
+                notes=None,
+                created_at=product.created_at,
+            )
+        )
+
+    rows.sort(key=lambda r: r.created_at or datetime.min, reverse=True)
+    unique_products = {r.product_id for r in rows}
+
     return schemas.FornecimentosReport(
         date=date_str,
-        products_count=len(rows),
+        products_count=len(unique_products),
         total_qty=total_qty,
         total_value=total_value.quantize(Decimal("0.01")),
         total_balance=Decimal("0"),
@@ -4932,12 +5067,7 @@ def ensure_monthly_tax_records(db: Session, reference_date: Optional[datetime] =
 
 def process_monthly_subscriptions(db: Session):
     """Processa as assinaturas mensais dos terminais"""
-    now = datetime.utcnow()
     initial_billing_date = datetime(2026, 6, 17)
-
-    # Import locally to avoid circular dependencies if any
-    from controllers.skywallet_gateway import SkyWalletGatewayClient
-    wallet_client = SkyWalletGatewayClient()
 
     terminals = db.query(PDVTerminal).all()
 
@@ -4949,50 +5079,6 @@ def process_monthly_subscriptions(db: Session):
 
         if terminal.subscription_status == "suspended":
             continue
-
-        if terminal.next_billing_date <= now:
-            user = terminal.user
-            if not user or not user.central_user_id:
-                continue
-
-            user_details = {
-                "central_user_id": str(user.central_user_id),
-                "email": user.email,
-                "full_name": user.name,
-                "username": user.username
-            }
-
-            charge_success = False
-            try:
-                # Attempt to get balance
-                balance_data = wallet_client.sync_get_balance(str(user.central_user_id), user_details)
-                main_balance = float(balance_data.get("balance", {}).get("main_balance", 0))
-
-                if main_balance >= 1200:
-                    reference = f"skypdv-subscription-auto-{terminal.id}-{now.isoformat()}"
-                    wallet_client.sync_charge(user_details, 1200.0, reference, {"product_code": "skypdv", "auto": True})
-                    charge_success = True
-            except Exception as e:
-                print(f"Failed to auto-charge terminal {terminal.id}: {e}")
-
-            if charge_success:
-                terminal.next_billing_date = now + timedelta(days=30)
-                terminal.subscription_status = "active"
-                terminal.grace_period_ends_at = None
-            else:
-                # Determine grace period
-                if terminal.next_billing_date == initial_billing_date:
-                    grace_days = 4
-                else:
-                    grace_days = 7
-
-                grace_end = terminal.next_billing_date + timedelta(days=grace_days)
-                terminal.grace_period_ends_at = grace_end
-
-                if now > grace_end:
-                    terminal.subscription_status = "suspended"
-                else:
-                    terminal.subscription_status = "grace_period"
 
         db.commit()
 

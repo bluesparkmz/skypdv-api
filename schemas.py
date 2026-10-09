@@ -1256,18 +1256,24 @@ class PDVServiceSummary(BaseModel):
 
 class FornecimentoRow(BaseModel):
     """Linha unificada: produto fornecido e/ou cadastrado no dia"""
+    movement_id: Optional[int] = None  # presente em entradas (permite editar/eliminar)
     product_id: int
     product_name: str
     product_sku: Optional[str] = None
     category: Optional[str] = None
     kind: str  # "fornecimento" | "cadastro" | "ambos"
-    quantity: Decimal  # qtd fornecida no dia (entradas)
+    quantity: Decimal  # qtd fornecida neste movimento / dia
     unit_price: Decimal  # preço de venda
     line_total: Decimal  # quantity * unit_price
     balance: Decimal  # saldo actual em stock
     balance_value: Decimal  # balance * unit_price
     notes: Optional[str] = None
     created_at: datetime
+
+
+class FornecimentoUpdate(BaseModel):
+    """Actualizar quantidade de um fornecimento (movimento de entrada)"""
+    quantity: Decimal = Field(..., gt=0, description="Nova quantidade fornecida (> 0)")
 
 
 class FornecimentosReport(BaseModel):

@@ -13,7 +13,6 @@ from auth import get_current_user
 from models import User, PDVStockMovement, MovementType, PDVSale, PDVSaleItem, PDVProduct, PDVInventory, PDVSupplier, PDVTerminal, PDVCashRegister, FastFoodRestaurant, PDVPaymentMethod
 import schemas
 from controllers import controller
-from controllers.skywallet_gateway import SkyWalletGatewayClient
 import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -108,21 +107,17 @@ def update_my_terminal(
 class PayAdvanceRequest(BaseModel):
     months: int
 
+def _gateway_removed() -> None:
+    raise HTTPException(status_code=410, detail="O gateway interno da SkyWallet foi removido.")
+
+
 @router.get("/skywallet/balance")
 async def get_skywallet_balance(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Obter saldo do SkyWallet do usuário"""
-    terminal = controller.get_terminal_required(db, current_user.id)
-    wallet_client = SkyWalletGatewayClient()
-    user_details = {
-        "central_user_id": str(current_user.central_user_id),
-        "email": current_user.email,
-        "full_name": current_user.name,
-        "username": current_user.username
-    }
-    return await wallet_client.get_balance(str(current_user.central_user_id), user_details)
+    _gateway_removed()
 
 @router.post("/terminal/subscription/pay")
 async def pay_subscription(
@@ -130,41 +125,7 @@ async def pay_subscription(
     current_user: User = Depends(get_current_user)
 ):
     """Pagar assinatura mensal (1 mês)"""
-    terminal = controller.get_terminal_required(db, current_user.id)
-    wallet_client = SkyWalletGatewayClient()
-    user_details = {
-        "central_user_id": str(current_user.central_user_id),
-        "email": current_user.email,
-        "full_name": current_user.name,
-        "username": current_user.username
-    }
-    
-    # Get balance first
-    balance_data = await wallet_client.get_balance(str(current_user.central_user_id), user_details)
-    main_balance = float(balance_data.get("balance", {}).get("main_balance", 0))
-    
-    if main_balance < 1200:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="Saldo insuficiente. Por favor, recarregue sua SkyWallet.",
-            headers={"X-Need-Deposit": "true"}
-        )
-    
-    # Charge user
-    reference = f"skypdv-subscription-{terminal.id}-{datetime.utcnow().isoformat()}"
-    await wallet_client.charge(user_details, 1200.0, reference, {"product_code": "skypdv"})
-    
-    # Update terminal subscription
-    if terminal.next_billing_date and terminal.next_billing_date > datetime.utcnow():
-        terminal.next_billing_date = terminal.next_billing_date + timedelta(days=30)
-    else:
-        terminal.next_billing_date = datetime.utcnow() + timedelta(days=30)
-    terminal.subscription_status = "active"
-    terminal.grace_period_ends_at = None
-    db.commit()
-    db.refresh(terminal)
-    
-    return terminal
+    _gateway_removed()
 
 @router.post("/terminal/subscription/pay-advance")
 async def pay_advance_subscription(
@@ -173,44 +134,7 @@ async def pay_advance_subscription(
     current_user: User = Depends(get_current_user)
 ):
     """Pagar assinatura antecipada (múltiplos meses)"""
-    months = max(1, min(12, request.months))  # Limit 1-12 months
-    total_amount = 1200 * months
-    
-    terminal = controller.get_terminal_required(db, current_user.id)
-    wallet_client = SkyWalletGatewayClient()
-    user_details = {
-        "central_user_id": str(current_user.central_user_id),
-        "email": current_user.email,
-        "full_name": current_user.name,
-        "username": current_user.username
-    }
-    
-    # Get balance first
-    balance_data = await wallet_client.get_balance(str(current_user.central_user_id), user_details)
-    main_balance = float(balance_data.get("balance", {}).get("main_balance", 0))
-    
-    if main_balance < total_amount:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"Saldo insuficiente. Necessário: {total_amount} MT. Por favor, recarregue sua SkyWallet.",
-            headers={"X-Need-Deposit": "true"}
-        )
-    
-    # Charge user
-    reference = f"skypdv-subscription-advance-{terminal.id}-{datetime.utcnow().isoformat()}"
-    await wallet_client.charge(user_details, total_amount, reference, {"product_code": "skypdv", "months": months})
-    
-    # Update terminal subscription
-    if terminal.next_billing_date and terminal.next_billing_date > datetime.utcnow():
-        terminal.next_billing_date = terminal.next_billing_date + timedelta(days=30 * months)
-    else:
-        terminal.next_billing_date = datetime.utcnow() + timedelta(days=30 * months)
-    terminal.subscription_status = "active"
-    terminal.grace_period_ends_at = None
-    db.commit()
-    db.refresh(terminal)
-    
-    return terminal
+    _gateway_removed()
 
 
 @router.post("/terminal/subscription/pay-all")
@@ -219,84 +143,8 @@ async def pay_all_terminals(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Permite que o admin pague a assinatura de TODOS os terminais associados a um restaurante FastFood.
-
-    - Se `restaurant_id` for fornecido, valida que o `current_user` é dono do restaurante.
-    - Cobra o valor total (1200 MT por terminal) da SkyWallet do usuário e atualiza os terminais.
-    """
-    wallet_client = SkyWalletGatewayClient()
-
-    # Descobrir terminais a pagar
-    if restaurant_id is None:
-        # Sem restaurant_id: operar apenas no terminal do usuário atual
-        terminal = controller.get_terminal_required(db, current_user.id)
-        terminal_ids = [terminal.id]
-    else:
-        # Verificar restaurante e permissões
-        restaurant = db.query(FastFoodRestaurant).filter(FastFoodRestaurant.id == restaurant_id).first()
-        if not restaurant:
-            raise HTTPException(status_code=404, detail="Restaurant not found")
-        if restaurant.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Only restaurant owner can perform bulk payment")
-
-        suppliers = db.query(PDVSupplier).filter(
-            PDVSupplier.source_type == "fastfood",
-            PDVSupplier.external_id == restaurant_id
-        ).all()
-        terminal_ids = list({s.terminal_id for s in suppliers})
-
-    if not terminal_ids:
-        raise HTTPException(status_code=400, detail="No terminals found to pay")
-
-    total_amount = 1200.0 * len(terminal_ids)
-
-    user_details = {
-        "central_user_id": str(current_user.central_user_id),
-        "email": current_user.email,
-        "full_name": current_user.name,
-        "username": current_user.username
-    }
-
-    balance_data = await wallet_client.get_balance(str(current_user.central_user_id), user_details)
-    main_balance = float(balance_data.get("balance", {}).get("main_balance", 0))
-    if main_balance < total_amount:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"Saldo insuficiente. Necessário: {total_amount} MT para pagar {len(terminal_ids)} terminais.",
-            headers={"X-Need-Deposit": "true"}
-        )
-
-    reference = f"skypdv-subscription-pay-all-{current_user.id}-{datetime.utcnow().isoformat()}"
-    await wallet_client.charge(user_details, total_amount, reference, {"product_code": "skypdv", "terminals": terminal_ids})
-
-    # Atualizar terminais
-    from models import PDVTerminal
-    updated = []
-    for tid in terminal_ids:
-        t = db.query(PDVTerminal).filter(PDVTerminal.id == tid).first()
-        if not t:
-            continue
-        if t.next_billing_date and t.next_billing_date > datetime.utcnow():
-            t.next_billing_date = t.next_billing_date + timedelta(days=30)
-        else:
-            t.next_billing_date = datetime.utcnow() + timedelta(days=30)
-        t.subscription_status = "active"
-        t.grace_period_ends_at = None
-        db.add(t)
-        updated.append(t)
-
-    db.commit()
-    # Refresh objects
-    for t in updated:
-        db.refresh(t)
-
-    return updated
-
-# DEPRECATED: Deposits are now handled exclusively through SkyWallet
-# Users must go to https://skywallet.bluesparkmz.com to deposit funds
-# @router.post("/skywallet/deposit")
-# async def deposit_skywallet(...):
-#     """Endpoint deprecated - use SkyWallet for deposits"""
+    """Permite que o admin pague a assinatura de TODOS os terminais associados a um restaurante FastFood."""
+    _gateway_removed()
 
 # ===================================================================
 # Terminal Users Management - Gestão de usuários do terminal
@@ -707,6 +555,33 @@ def transfer_inventory(
     terminal = controller.get_terminal_required(db, current_user.id)
     controller.require_terminal_permission(db, terminal.id, current_user.id, "can_manage_stock")
     return controller.transfer_stock(db, transfer, terminal.id, current_user.id)
+
+
+@router.put("/inventory/movements/{movement_id}", response_model=schemas.PDVStockMovement)
+def update_fornecimento_movement(
+    movement_id: int,
+    payload: schemas.FornecimentoUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Editar quantidade de um fornecimento (entrada de stock) e corrigir o inventário."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_manage_stock")
+    return controller.update_fornecimento_movement(
+        db, movement_id, payload.quantity, terminal.id, current_user.id
+    )
+
+
+@router.delete("/inventory/movements/{movement_id}")
+def delete_fornecimento_movement(
+    movement_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Eliminar um fornecimento registado por engano e reverter a quantidade no stock."""
+    terminal = controller.get_terminal_required(db, current_user.id)
+    controller.require_terminal_permission(db, terminal.id, current_user.id, "can_manage_stock")
+    return controller.delete_fornecimento_movement(db, movement_id, terminal.id, current_user.id)
 
 @router.get("/inventory", response_model=schemas.InventoryReport)
 def get_inventory_report(
