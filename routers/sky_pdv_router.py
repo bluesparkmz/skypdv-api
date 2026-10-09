@@ -557,14 +557,14 @@ def transfer_inventory(
     return controller.transfer_stock(db, transfer, terminal.id, current_user.id)
 
 
-@router.put("/inventory/movements/{movement_id}", response_model=schemas.PDVStockMovement)
+@router.put("/inventory/movements/{movement_id}")
 def update_fornecimento_movement(
     movement_id: int,
     payload: schemas.FornecimentoUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Editar quantidade de um fornecimento (entrada de stock) e corrigir o inventário."""
+    """Editar quantidade de um fornecimento. Quantidade 0 elimina o movimento do extrato."""
     terminal = controller.get_terminal_required(db, current_user.id)
     controller.require_terminal_permission(db, terminal.id, current_user.id, "can_manage_stock")
     return controller.update_fornecimento_movement(

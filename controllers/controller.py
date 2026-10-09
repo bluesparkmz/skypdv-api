@@ -3910,10 +3910,13 @@ def update_fornecimento_movement(
     new_quantity: Decimal,
     terminal_id: int,
     user_id: int,
-) -> PDVStockMovement:
-    """Alterar a quantidade de um fornecimento e corrigir o stock."""
-    if new_quantity <= 0:
-        raise HTTPException(status_code=400, detail="A quantidade deve ser maior que zero")
+):
+    """Alterar a quantidade de um fornecimento e corrigir o stock. Qty 0 = eliminar."""
+    if new_quantity < 0:
+        raise HTTPException(status_code=400, detail="A quantidade não pode ser negativa")
+
+    if new_quantity == 0:
+        return delete_fornecimento_movement(db, movement_id, terminal_id, user_id)
 
     movement, old_qty = _get_editable_supply_movement(db, movement_id, terminal_id)
     if new_quantity == old_qty:
@@ -3924,25 +3927,20 @@ def update_fornecimento_movement(
     qty_before_inv = Decimal(str(inventory.quantity or 0))
     delta = new_quantity - old_qty
     qty_after_inv = qty_before_inv + delta
+    # Se reduzir mais do que há em stock, baixa só até zero e aplica a nova qty no movimento
     if qty_after_inv < 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Stock insuficiente para reduzir esta quantidade de fornecimento",
-        )
+        qty_after_inv = Decimal("0")
 
     inventory.quantity = qty_after_inv
     inventory.updated_at = datetime.utcnow()
 
     # Actualiza o registo do movimento para reflectir a nova quantidade fornecida
     before = Decimal(str(movement.quantity_before)) if movement.quantity_before is not None else (qty_before_inv - old_qty)
+    if before < 0:
+        before = Decimal("0")
     movement.quantity_before = before
     movement.quantity_after = before + new_quantity
-    mt = movement.movement_type
-    mt_val = mt.value if hasattr(mt, "value") else str(mt)
-    if mt_val in (MovementType.ADJUSTMENT.value, "adjustment"):
-        movement.quantity = new_quantity
-    else:
-        movement.quantity = new_quantity
+    movement.quantity = new_quantity
     note_suffix = f" [editado por user {user_id}]"
     if movement.notes and note_suffix not in movement.notes:
         movement.notes = f"{movement.notes}{note_suffix}"
@@ -3959,18 +3957,19 @@ def update_fornecimento_movement(
 def delete_fornecimento_movement(
     db: Session, movement_id: int, terminal_id: int, user_id: int
 ) -> dict:
-    """Eliminar um fornecimento errado e reverter a quantidade no stock."""
+    """
+    Eliminar um fornecimento errado sem deixar rasto no extrato.
+    Remove sempre o movimento; o stock só baixa até zero (não bloqueia a eliminação).
+    """
     movement, supply_qty = _get_editable_supply_movement(db, movement_id, terminal_id)
     inventory = _get_inventory_for_movement(db, movement.product_id, terminal_id, movement.notes)
     product = db.query(PDVProduct).filter(PDVProduct.id == movement.product_id).first()
+    product_id = movement.product_id
 
     qty_before_inv = Decimal(str(inventory.quantity or 0))
-    qty_after_inv = qty_before_inv - supply_qty
-    if qty_after_inv < 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Stock insuficiente para eliminar este fornecimento (já foi vendido/saído)",
-        )
+    # Nunca impedir a eliminação: se já vendeu parte, baixa só o que ainda há em stock
+    reversed_qty = min(supply_qty, qty_before_inv)
+    qty_after_inv = qty_before_inv - reversed_qty
 
     inventory.quantity = qty_after_inv
     inventory.updated_at = datetime.utcnow()
@@ -3978,9 +3977,17 @@ def delete_fornecimento_movement(
     if product:
         _notify_stock_critical(db, product, inventory, qty_before_inv, qty_after_inv)
 
+    # Apaga o movimento primeiro — some do relatório e dos totais
     db.delete(movement)
+    db.flush()
+
     db.commit()
-    return {"message": "Fornecimento eliminado", "reversed_qty": str(supply_qty)}
+    return {
+        "message": "Fornecimento eliminado",
+        "reversed_qty": str(reversed_qty),
+        "product_id": product_id,
+        "movement_id": movement_id,
+    }
 
 
 def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[datetime] = None) -> schemas.FornecimentosReport:
@@ -4060,6 +4067,8 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
             )
         )
 
+    # Cadastros do dia sem entrada: mostram-se só para informação (qty/valor = 0).
+    # Não entram em total_qty / total_value.
     for product in created_products:
         if product.id in supplied_product_ids:
             continue
@@ -4085,7 +4094,9 @@ def get_fornecimentos_report(db: Session, terminal_id: int, day: Optional[dateti
         )
 
     rows.sort(key=lambda r: r.created_at or datetime.min, reverse=True)
-    unique_products = {r.product_id for r in rows}
+    # Contagem / totais só com entradas reais (fornecimentos), não cadastros a zero
+    supply_rows = [r for r in rows if r.kind == "fornecimento"]
+    unique_products = {r.product_id for r in supply_rows}
 
     return schemas.FornecimentosReport(
         date=date_str,

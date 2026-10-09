@@ -1272,8 +1272,8 @@ class FornecimentoRow(BaseModel):
 
 
 class FornecimentoUpdate(BaseModel):
-    """Actualizar quantidade de um fornecimento (movimento de entrada)"""
-    quantity: Decimal = Field(..., gt=0, description="Nova quantidade fornecida (> 0)")
+    """Actualizar quantidade de um fornecimento (movimento de entrada). 0 = eliminar."""
+    quantity: Decimal = Field(..., ge=0, description="Nova quantidade fornecida (0 elimina)")
 
 
 class FornecimentosReport(BaseModel):
