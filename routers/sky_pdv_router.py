@@ -1240,22 +1240,8 @@ def get_sales_report(
     - Se user_id for fornecido e usuário for admin, filtra por esse caixa específico
     """
     terminal = controller.get_terminal_required(db, current_user.id)
-    
-    # Se não informar datas, assume mês atual
-    if not start_date:
-        start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        # Garantir que start_date comece no início do dia se não houver tempo
-        if start_date.hour == 0 and start_date.minute == 0 and start_date.second == 0:
-            start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_date, end_date = controller.normalize_report_datetime_range(start_date, end_date)
 
-    if not end_date:
-        end_date = datetime.utcnow()
-    else:
-        # Se end_date foi fornecido sem horas, assume fim do dia
-        if end_date.hour == 0 and end_date.minute == 0 and end_date.second == 0:
-            end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
-    
     # Se user_id foi fornecido e usuário é admin, usar esse user_id
     # Caso contrário, usar current_user.id (filtro automático)
     if controller.is_terminal_admin(db, terminal.id, current_user.id):
@@ -1290,17 +1276,8 @@ def get_sales_report_pdf(
 
     terminal = controller.get_terminal_required(db, current_user.id)
 
-    # ── Date defaults ─────────────────────────────────────────
-    if not start_date:
-        start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        if start_date.hour == 0 and start_date.minute == 0 and start_date.second == 0:
-            start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-    if not end_date:
-        end_date = datetime.utcnow()
-    else:
-        if end_date.hour == 0 and end_date.minute == 0 and end_date.second == 0:
-            end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+    start_date, end_date = controller.normalize_report_datetime_range(start_date, end_date)
+    period_meta = controller.report_period_title(start_date, end_date)
 
     if controller.is_terminal_admin(db, terminal.id, current_user.id):
         filter_user_id = user_id
@@ -1309,7 +1286,7 @@ def get_sales_report_pdf(
 
     currency = terminal.currency or "MT"
     issued_at = datetime.utcnow()
-    period_label = f"{start_date.strftime('%d/%m/%Y')} até {end_date.strftime('%d/%m/%Y')}"
+    period_label = period_meta["period_label"]
 
     # ── Helpers ───────────────────────────────────────────────
     def _fmt_dt(dt) -> str:
@@ -1616,7 +1593,7 @@ def get_sales_report_pdf(
     story.append(HRFlowable(width="100%", thickness=1, color=C_BLACK, spaceAfter=8))
 
     scope_label = "Apenas bebidas" if product_scope == "beverages" else "Todos os produtos"
-    story.append(Paragraph("Relatório geral", ST_H2))
+    story.append(Paragraph(period_meta["title"], ST_H2))
     story.append(Paragraph(
         f"Período: {period_label}    ·    Escopo: {scope_label}    ·    Emitido: {_fmt_dt(issued_at)}    ·    Terminal: {_esc(terminal.name or '')}",
         ST_SUB
@@ -1736,18 +1713,18 @@ def get_sales_report_pdf(
     story.append(Spacer(1, 14))
     story.append(HRFlowable(width="100%", thickness=0.5, color=C_LINE, spaceAfter=6))
     story.append(Paragraph(
-        f"SkyPDV — Relatório geral gerado em {_fmt_dt(issued_at)}  |  Terminal: {_esc(terminal.name or '—')}  |  {_esc(company_name)}",
+        f"SkyPDV — {period_meta['title']} gerado em {_fmt_dt(issued_at)}  |  Terminal: {_esc(terminal.name or '—')}  |  {_esc(company_name)}",
         ST_FOOT
     ))
 
     doc.build(story)
     pdf_bytes = buffer.getvalue()
 
-    filename = f"Relatorio_Geral_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.pdf"
+    filename = f"{period_meta['filename_stem']}.pdf"
     resp_headers = {"Content-Disposition": f'inline; filename="{filename}"'}
 
     if phone:
-        caption = f"Relatório Geral SkyPDV — {period_label}"
+        caption = f"{period_meta['title']} SkyPDV — {period_label}"
         send_whatsapp_file(phone, filename, "application/pdf", pdf_bytes, caption=caption)
         send_whatsapp_text(phone, caption)
 
@@ -1775,19 +1752,8 @@ def get_sales_report_excel(
 
     terminal = controller.get_terminal_required(db, current_user.id)
     currency = terminal.currency or "MT"
-
-    # Datas padrão
-    if not start_date:
-        start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        if start_date.hour == 0 and start_date.minute == 0 and start_date.second == 0:
-            start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    if not end_date:
-        end_date = datetime.utcnow()
-    else:
-        if end_date.hour == 0 and end_date.minute == 0 and end_date.second == 0:
-            end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+    start_date, end_date = controller.normalize_report_datetime_range(start_date, end_date)
+    period_meta = controller.report_period_title(start_date, end_date)
 
     filter_user_id = user_id if controller.is_terminal_admin(db, terminal.id, current_user.id) else current_user.id
 
@@ -1909,6 +1875,7 @@ def get_sales_report_excel(
     ws_summary = wb.active
     ws_summary.title = "Resumo Geral"
     summary_rows = [
+        ("Relatório", period_meta["title"]),
         ("Terminal", terminal.name or "SkyPDV"),
         ("Período Início", start_date.strftime("%d/%m/%Y %H:%M")),
         ("Período Fim", end_date.strftime("%d/%m/%Y %H:%M")),
@@ -1945,8 +1912,8 @@ def get_sales_report_excel(
         ws_summary.append([name, value])
     local_start = controller.to_mozambique_datetime(start_date) or start_date
     local_end = controller.to_mozambique_datetime(end_date) or end_date
-    ws_summary["B3"] = local_start.strftime("%d/%m/%Y %H:%M")
-    ws_summary["B4"] = local_end.strftime("%d/%m/%Y %H:%M")
+    ws_summary["B4"] = local_start.strftime("%d/%m/%Y %H:%M")
+    ws_summary["B5"] = local_end.strftime("%d/%m/%Y %H:%M")
 
     # Planilha 2: Meios de Pagamento Consolidados
     ws_pay = wb.create_sheet("Meios de Pagamento")
@@ -2193,14 +2160,14 @@ def get_sales_report_excel(
     wb.save(buffer)
     buffer.seek(0)
 
-    filename = f"Relatorio_Geral_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx"
+    filename = f"{period_meta['filename_stem']}.xlsx"
     headers = {
         "Content-Disposition": f'attachment; filename="{filename}"',
         "Access-Control-Expose-Headers": "Content-Disposition",
     }
 
     if phone:
-        caption = f"Relatório Geral SkyPDV (Excel) {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}."
+        caption = f"{period_meta['title']} SkyPDV (Excel) {period_meta['period_label']}."
         send_whatsapp_file(phone, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer.getvalue(), caption=caption)
         send_whatsapp_text(phone, caption)
 
@@ -2472,10 +2439,7 @@ def get_sales_by_day(
     Se não informar datas, assume mês atual.
     """
     terminal = controller.get_terminal_required(db, current_user.id)
-    if not start_date:
-        start_date = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)
-    if not end_date:
-        end_date = datetime.utcnow()
+    start_date, end_date = controller.normalize_report_datetime_range(start_date, end_date)
     if controller.is_terminal_admin(db, terminal.id, current_user.id):
         filter_user_id = user_id
     else:

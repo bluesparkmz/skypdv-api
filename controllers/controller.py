@@ -64,6 +64,92 @@ def mozambique_datetime_to_utc(value: datetime) -> datetime:
         value = value.replace(tzinfo=MOZAMBIQUE_TIMEZONE)
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
+
+def mozambique_month_bounds_utc(year: int, month: int) -> tuple:
+    """Intervalo UTC do mês civil em Moçambique."""
+    from calendar import monthrange
+
+    last_day = monthrange(year, month)[1]
+    start = datetime(year, month, 1, 0, 0, 0)
+    end = datetime(year, month, last_day, 23, 59, 59, 999999)
+    return mozambique_datetime_to_utc(start), mozambique_datetime_to_utc(end)
+
+
+def mozambique_year_bounds_utc(year: int) -> tuple:
+    """Intervalo UTC do ano civil em Moçambique."""
+    start = datetime(year, 1, 1, 0, 0, 0)
+    end = datetime(year, 12, 31, 23, 59, 59, 999999)
+    return mozambique_datetime_to_utc(start), mozambique_datetime_to_utc(end)
+
+
+def normalize_report_datetime_range(
+    start_date: Optional[datetime],
+    end_date: Optional[datetime],
+) -> tuple:
+    """Normaliza o período de um relatório para UTC naive (colunas do banco).
+
+    Datas só com dia (00:00:00 sem timezone) são interpretadas como calendário
+    de Moçambique, para o relatório mensal não ficar cortado num único dia UTC.
+    """
+    now_mz = datetime.now(MOZAMBIQUE_TIMEZONE).replace(tzinfo=None)
+
+    def to_utc_naive(value: datetime, *, is_end: bool) -> datetime:
+        if value.tzinfo is not None:
+            return mozambique_datetime_to_utc(value)
+        if value.hour == 0 and value.minute == 0 and value.second == 0 and value.microsecond == 0:
+            local = value.replace(hour=23, minute=59, second=59, microsecond=999999) if is_end else value
+            return mozambique_datetime_to_utc(local)
+        return value
+
+    if start_date is None:
+        start_utc = mozambique_datetime_to_utc(
+            now_mz.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        )
+    else:
+        start_utc = to_utc_naive(start_date, is_end=False)
+
+    if end_date is None:
+        end_utc = mozambique_datetime_to_utc(now_mz)
+    else:
+        end_utc = to_utc_naive(end_date, is_end=True)
+
+    return start_utc, end_utc
+
+
+def report_period_title(start_utc: datetime, end_utc: datetime) -> dict:
+    """Título e nome de ficheiro conforme o período (dia, mês ou intervalo)."""
+    from calendar import monthrange
+
+    start_mz = to_mozambique_datetime(start_utc) or start_utc
+    end_mz = to_mozambique_datetime(end_utc) or end_utc
+    same_day = start_mz.date() == end_mz.date()
+    full_month = (
+        start_mz.day == 1
+        and end_mz.day == monthrange(end_mz.year, end_mz.month)[1]
+        and (start_mz.year, start_mz.month) == (end_mz.year, end_mz.month)
+    )
+    period_label = f"{start_mz.strftime('%d/%m/%Y')} até {end_mz.strftime('%d/%m/%Y')}"
+    if full_month:
+        return {
+            "title": "Relatório mensal de vendas",
+            "period_label": period_label,
+            "filename_stem": f"Relatorio_Mensal_{start_mz.strftime('%Y%m')}",
+            "kind": "month",
+        }
+    if same_day:
+        return {
+            "title": "Relatório diário de vendas",
+            "period_label": period_label,
+            "filename_stem": f"Relatorio_Diario_{start_mz.strftime('%Y%m%d')}",
+            "kind": "day",
+        }
+    return {
+        "title": "Relatório geral de vendas",
+        "period_label": period_label,
+        "filename_stem": f"Relatorio_Geral_{start_mz.strftime('%Y%m%d')}_{end_mz.strftime('%Y%m%d')}",
+        "kind": "range",
+    }
+
 # ===================================================================
 # Terminals
 # ===================================================================
@@ -2737,12 +2823,9 @@ def get_detailed_monthly_report(db: Session, terminal_id: int, year: int, month:
     RelatÃ³rio mensal detalhado com breakdown diÃ¡rio, top produtos, categorias, etc.
     Se user_id for fornecido e nÃ£o for admin, filtra apenas vendas criadas por esse usuÃ¡rio.
     """
-    from calendar import month_name, monthrange
+    from calendar import month_name
     
-    # Calcular perÃ­odo do mÃªs
-    start = datetime(year, month, 1, 0, 0, 0)
-    last_day = monthrange(year, month)[1]
-    end = datetime(year, month, last_day, 23, 59, 59, 999999)
+    start, end = mozambique_month_bounds_utc(year, month)
     
     # Resumo geral do mÃªs
     summary = get_sales_summary(db, terminal_id, start, end, user_id)
@@ -2807,9 +2890,7 @@ def get_detailed_monthly_report(db: Session, terminal_id: int, year: int, month:
         prev_month = 12
         prev_year = year - 1
     
-    prev_start = datetime(prev_year, prev_month, 1, 0, 0, 0)
-    prev_last_day = monthrange(prev_year, prev_month)[1]
-    prev_end = datetime(prev_year, prev_month, prev_last_day, 23, 59, 59, 999999)
+    prev_start, prev_end = mozambique_month_bounds_utc(prev_year, prev_month)
     prev_summary = get_sales_summary(db, terminal_id, prev_start, prev_end, user_id)
     
     if prev_summary["total_revenue"] > 0:
@@ -2839,11 +2920,9 @@ def get_detailed_yearly_report(db: Session, terminal_id: int, year: int, user_id
     RelatÃ³rio anual detalhado com breakdown mensal, comparaÃ§Ã£o, tendÃªncias, etc.
     Se user_id for fornecido e nÃ£o for admin, filtra apenas vendas criadas por esse usuÃ¡rio.
     """
-    from calendar import month_name, monthrange
+    from calendar import month_name
     
-    # Calcular perÃ­odo do ano
-    start = datetime(year, 1, 1, 0, 0, 0)
-    end = datetime(year, 12, 31, 23, 59, 59, 999999)
+    start, end = mozambique_year_bounds_utc(year)
     
     # Resumo geral do ano
     summary = get_sales_summary(db, terminal_id, start, end, user_id)
@@ -2860,9 +2939,7 @@ def get_detailed_yearly_report(db: Session, terminal_id: int, year: int, user_id
     # Breakdown mensal
     monthly_breakdown = []
     for month in range(1, 13):
-        month_start = datetime(year, month, 1, 0, 0, 0)
-        last_day = monthrange(year, month)[1]
-        month_end = datetime(year, month, last_day, 23, 59, 59, 999999)
+        month_start, month_end = mozambique_month_bounds_utc(year, month)
         
         month_sales = db.query(
             func.count(PDVSale.id),
@@ -2942,8 +3019,7 @@ def get_detailed_yearly_report(db: Session, terminal_id: int, year: int, user_id
     
     # ComparaÃ§Ã£o com ano anterior
     comparison = None
-    prev_start = datetime(year - 1, 1, 1, 0, 0, 0)
-    prev_end = datetime(year - 1, 12, 31, 23, 59, 59, 999999)
+    prev_start, prev_end = mozambique_year_bounds_utc(year - 1)
     prev_summary = get_sales_summary(db, terminal_id, prev_start, prev_end, user_id)
     
     if prev_summary["total_revenue"] > 0:
