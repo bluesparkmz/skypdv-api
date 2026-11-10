@@ -64,14 +64,15 @@ def _accounts_request(method: str, path: str, json: dict | None = None, token: s
     return data
 
 
-def introspect_central_token(token: str) -> dict:
+def introspect_central_token(token: str, *, verify_product_audience: bool = False) -> dict:
+    payload: dict = {"token": token}
+    # Audience opcional: admin de plataforma pode entrar no /manager sem aud=skypdv.
+    if verify_product_audience:
+        payload["product_code"] = BLUESPARK_PRODUCT_CODE
     claims = _accounts_request(
         "POST",
         "/auth/introspect",
-        json={
-            "token": token,
-            "product_code": BLUESPARK_PRODUCT_CODE,
-        },
+        json=payload,
     )
     if not claims.get("active"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessao invalida.")

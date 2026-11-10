@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
@@ -26,7 +26,7 @@ class ManagerOverview(BaseModel):
 
 class ManagerTerminalOwner(BaseModel):
     id: int
-    email: EmailStr
+    email: str
     username: str
     name: str | None = None
     phone: str | None = None
