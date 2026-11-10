@@ -13,8 +13,28 @@ from models import User, PDVTerminal, PDVTerminalInvite, PDVTerminalUser
 BLUESPARK_ACCOUNTS_URL = os.getenv("BLUESPARK_ACCOUNTS_URL", "https://accounts.bluesparkmz.com").rstrip("/")
 BLUESPARK_PRODUCT_CODE = os.getenv("BLUESPARK_PRODUCT_CODE", "skypdv")
 BLUESPARK_AUTH_TIMEOUT_SECONDS = float(os.getenv("BLUESPARK_AUTH_TIMEOUT_SECONDS", "15"))
+PLATFORM_ADMIN_EMAILS = ("bluesparkmz1@gmail.com",)
 
 bearer_scheme = HTTPBearer(scheme_name="BlueSparkAccounts")
+
+
+def is_platform_admin(claims: dict, email: str | None = None) -> bool:
+    """Admin da plataforma BlueSpark (mesmo user, role admin)."""
+    nested = claims.get("claims") if isinstance(claims.get("claims"), dict) else {}
+    if claims.get("is_superuser") is True or nested.get("is_superuser") is True:
+        return True
+    platform_role = str(
+        claims.get("platform_role") or nested.get("platform_role") or ""
+    ).strip().lower()
+    if platform_role == "admin":
+        return True
+    resolved_email = (
+        email
+        or claims.get("email")
+        or nested.get("email")
+        or ""
+    ).strip().lower()
+    return resolved_email in PLATFORM_ADMIN_EMAILS
 
 
 def _accounts_url(path: str) -> str:
@@ -201,12 +221,36 @@ def get_current_user(
     user = sync_local_user_from_claims(db, claims)
     accept_pending_terminal_invites(db, user)
 
-    if not _has_skypdv_membership(claims) and not _has_local_pdv_access(db, user):
+    if (
+        not is_platform_admin(claims, user.email)
+        and not _has_skypdv_membership(claims)
+        and not _has_local_pdv_access(db, user)
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Sem acesso ao produto SkyPDV",
         )
 
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilizador inativo")
+    return user
+
+
+def get_current_platform_admin(
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    token = (credentials.credentials or "").strip()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token ausente")
+
+    claims = introspect_central_token(token)
+    user = sync_local_user_from_claims(db, claims)
+    if not is_platform_admin(claims, user.email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sem permissões de admin da plataforma",
+        )
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilizador inativo")
     return user

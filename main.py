@@ -18,6 +18,7 @@ from database import Base, engine, get_db, SessionLocal
 from models import PDVProduct, User, FastFoodRestaurant, RestaurantTable
 from routers.categories import router as categories_router
 from routers.sky_pdv_router import router as sky_pdv_router
+from routers.manager import router as manager_router
 from routers.methods._payment import router as payment_methods_router
 from controllers import controller
 import schemas
@@ -283,6 +284,7 @@ def update_phone(
 app.include_router(categories_router)
 app.include_router(payment_methods_router)
 app.include_router(sky_pdv_router)
+app.include_router(manager_router)
 
 # Legacy accounts routes without /skypdv prefix (frontend fallback)
 @app.get("/accounts", response_model=List[schemas.PDVAccount])
