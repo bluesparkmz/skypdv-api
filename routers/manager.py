@@ -183,3 +183,106 @@ def manager_update_terminal(
     db.commit()
     db.refresh(terminal)
     return _terminal_item(db, terminal)
+
+
+class ManagerInvoiceCreate(BaseModel):
+    plan: str = "basic"
+    months: int = 1
+    amount_mzn: float | None = None
+    notes: str | None = None
+
+
+class ManagerInvoiceMarkPaid(BaseModel):
+    notes: str | None = None
+    payment_method: str = "transfer"
+
+
+@router.post("/terminals/{terminal_id}/invoices")
+def manager_create_invoice(
+    terminal_id: int,
+    payload: ManagerInvoiceCreate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_platform_admin),
+):
+    from controllers import billing as billing_controller
+    from decimal import Decimal
+
+    amount = Decimal(str(payload.amount_mzn)) if payload.amount_mzn is not None else None
+    return billing_controller.create_invoice(
+        db,
+        terminal_id=terminal_id,
+        admin=current_admin,
+        plan=payload.plan,
+        months=payload.months,
+        amount_mzn=amount,
+        notes=payload.notes,
+    )
+
+
+@router.get("/terminals/{terminal_id}/invoices")
+def manager_list_terminal_invoices(
+    terminal_id: int,
+    status: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_platform_admin),
+):
+    from controllers import billing as billing_controller
+
+    return billing_controller.list_invoices(
+        db,
+        terminal_id=terminal_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/invoices")
+def manager_list_invoices(
+    status: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_platform_admin),
+):
+    from controllers import billing as billing_controller
+
+    return billing_controller.list_invoices(
+        db,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post("/invoices/{invoice_id}/mark-paid")
+def manager_mark_invoice_paid(
+    invoice_id: int,
+    payload: ManagerInvoiceMarkPaid,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_platform_admin),
+):
+    from controllers import billing as billing_controller
+
+    return billing_controller.mark_invoice_paid(
+        db,
+        invoice_id,
+        payment_method=payload.payment_method or "transfer",
+        notes=payload.notes,
+    )
+
+
+@router.get("/billing/options")
+def manager_billing_options(_: User = Depends(get_current_platform_admin)):
+    from controllers import billing as billing_controller
+
+    return {
+        "plans": {
+            "basic": {"label": "Básico", "amount_mzn": float(billing_controller.PLAN_PRICES_MZN["basic"])},
+            "pro": {"label": "Pro", "amount_mzn": float(billing_controller.PLAN_PRICES_MZN["pro"])},
+        },
+        "transfer": billing_controller.transfer_instructions(),
+        "skywallet_enabled": billing_controller.skywallet_enabled(),
+    }

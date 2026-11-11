@@ -607,3 +607,29 @@ class PDVOutflow(Base):
     expense = relationship("PDVExpense")
     stock_movement = relationship("PDVStockMovement")
     created_by_user = relationship("User", foreign_keys=[created_by])
+
+
+class PDVBillingInvoice(Base):
+    """Faturação de assinatura SkyPDV (manager → SkyWallet / transferência)."""
+
+    __tablename__ = "pdv_billing_invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    terminal_id = Column(Integer, ForeignKey("pdv_terminals.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    plan = Column(String(30), nullable=False, default="basic")
+    months = Column(Integer, nullable=False, default=1)
+    amount = Column(DECIMAL(14, 2), nullable=False)
+    currency = Column(String(10), nullable=False, default="MZN")
+    status = Column(String(30), nullable=False, default="pending", index=True)
+    order_id = Column(String(120), unique=True, nullable=False, index=True)
+    payment_url = Column(Text, nullable=True)
+    skywallet_link_id = Column(Integer, nullable=True)
+    payment_method = Column(String(40), nullable=True)
+    notes = Column(Text, nullable=True)
+    paid_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    terminal = relationship("PDVTerminal", backref="billing_invoices")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])

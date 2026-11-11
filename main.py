@@ -286,6 +286,19 @@ app.include_router(payment_methods_router)
 app.include_router(sky_pdv_router)
 app.include_router(manager_router)
 
+
+@app.post("/manager/billing/skywallet/webhook")
+async def skywallet_billing_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Confirmação SkyWallet (payment link). Sem JWT — validado por HMAC."""
+    from controllers import billing as billing_controller
+
+    raw = await request.body()
+    signature = request.headers.get("X-Webhook-Signature")
+    return billing_controller.handle_skywallet_webhook(db, raw, signature)
+
 # Legacy accounts routes without /skypdv prefix (frontend fallback)
 @app.get("/accounts", response_model=List[schemas.PDVAccount])
 def list_accounts_root(
