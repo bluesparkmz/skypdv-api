@@ -10,7 +10,7 @@ import os
 import secrets
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -90,6 +90,18 @@ def _resolve_amount(plan: str, months: int, amount_mzn: Decimal | None) -> Decim
     if unit is None:
         raise HTTPException(status_code=400, detail="Plano inválido")
     return (unit * Decimal(months)).quantize(Decimal("0.01"))
+
+
+def billing_end_date(months: int = 1, from_dt: datetime | None = None) -> datetime:
+    """Validade: dia 1 do mês seguinte (ou N meses à frente)."""
+    from_dt = from_dt or datetime.utcnow()
+    months = max(1, int(months or 1))
+    year = from_dt.year
+    month = from_dt.month + months
+    while month > 12:
+        month -= 12
+        year += 1
+    return datetime(year, month, 1)
 
 
 def get_billing_children(db: Session, parent_terminal_id: int) -> list[PDVTerminal]:
@@ -316,10 +328,13 @@ def create_invoice(
     db.commit()
     db.refresh(invoice)
 
+    valid_until = billing_end_date(invoice.months)
     payload = serialize_invoice(invoice)
     payload["terminal_name"] = terminal.name
     payload["billing_group_size"] = group_size
     payload["billing_child_names"] = [child.name for child in children]
+    payload["valid_until"] = valid_until.isoformat()
+    # E-mail HTML sempre para a conta principal (esta loja)
     owner_email = terminal.user.email if terminal.user else None
     payload["owner_email"] = owner_email
 
@@ -338,6 +353,8 @@ def create_invoice(
                 currency=invoice.currency,
                 payment_url=invoice.payment_url,
                 created_at=invoice.created_at,
+                valid_until=valid_until,
+                billing_child_names=[child.name for child in children],
             )
         except Exception:
             logger.exception("Erro inesperado ao enviar e-mail da fatura %s", invoice.order_id)
@@ -369,10 +386,12 @@ def list_invoices(
 
 
 def _activate_one_terminal(db: Session, terminal: PDVTerminal, months: int, now: datetime) -> None:
-    base = terminal.next_billing_date
-    if not base or base < now:
-        base = now
-    terminal.next_billing_date = base + timedelta(days=30 * max(1, months))
+    # Sempre dia 1 do mês seguinte (ou N meses à frente), a partir de agora
+    # ou da data de cobrança actual se ainda estiver no futuro.
+    base = now
+    if terminal.next_billing_date and terminal.next_billing_date > now:
+        base = terminal.next_billing_date
+    terminal.next_billing_date = billing_end_date(months, base)
     terminal.subscription_status = "active"
     terminal.grace_period_ends_at = None
     terminal.updated_at = now

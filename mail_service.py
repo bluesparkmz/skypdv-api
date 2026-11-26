@@ -65,37 +65,39 @@ INVOICE_HTML_TEMPLATE = """\
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light only" />
+  <meta name="supported-color-schemes" content="light only" />
   <title>Nova Fatura SkyPDV</title>
 </head>
-<body style="margin:0;padding:0;background-color:#f4f6fb;font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#1a1a2e;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:28px 12px;">
+<body style="margin:0;padding:0;background-color:#f3f4f6;font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;padding:28px 12px;">
     <tr>
       <td align="center">
-        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 28px rgba(79,47,232,0.12);">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
 
-          <!-- Cabeçalho com logos SkyPDV e BlueSpark MZ -->
+          <!-- Cabeçalho claro -->
           <tr>
-            <td style="background:linear-gradient(135deg,#4f2fe8 0%,#2b1799 100%);background-color:#4f2fe8;padding:28px 32px;">
+            <td style="background-color:#ffffff;padding:24px 32px;border-bottom:1px solid #e5e7eb;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                 <tr>
                   <td valign="middle">
                     <table role="presentation" cellpadding="0" cellspacing="0">
                       <tr>
-                        <td style="background-color:#ffffff;border-radius:10px;padding:6px 10px;">
+                        <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:6px 10px;">
                           <img src="$logo_skypdv" alt="SkyPDV" height="38" style="display:block;height:38px;width:auto;border:0;" />
                         </td>
                         <td style="padding:0 12px;">
-                          <div style="width:1px;height:34px;background-color:rgba(255,255,255,0.35);"></div>
+                          <div style="width:1px;height:34px;background-color:#e5e7eb;"></div>
                         </td>
-                        <td style="background-color:#ffffff;border-radius:10px;padding:6px 10px;">
+                        <td style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:6px 10px;">
                           <img src="$logo_bluespark" alt="BlueSpark MZ" height="38" style="display:block;height:38px;width:auto;border:0;" />
                         </td>
                       </tr>
                     </table>
                   </td>
-                  <td align="right" valign="middle" style="color:#ffffff;">
-                    <div style="font-size:20px;font-weight:700;line-height:1.2;">Nova Fatura</div>
-                    <div style="font-size:12px;color:#e0d9ff;margin-top:3px;">Subscrição SkyPDV</div>
+                  <td align="right" valign="middle" style="color:#111827;">
+                    <div style="font-size:20px;font-weight:700;line-height:1.2;color:#111827;">Nova Fatura</div>
+                    <div style="font-size:12px;color:#6b7280;margin-top:3px;">Subscrição SkyPDV</div>
                   </td>
                 </tr>
               </table>
@@ -104,69 +106,79 @@ INVOICE_HTML_TEMPLATE = """\
 
           <!-- Corpo -->
           <tr>
-            <td style="padding:32px;">
-              <p style="margin:0 0 20px 0;font-size:16px;line-height:1.5;color:#1a1a2e;">
-                Olá, <strong style="color:#4f2fe8;">$terminal_name</strong>!<br />
-                Foi emitida uma nova fatura de subscrição para o teu terminal <strong>SkyPDV</strong>.
+            <td style="padding:32px;background-color:#ffffff;">
+              <p style="margin:0 0 16px 0;font-size:16px;line-height:1.55;color:#111827;">
+                Olá, <strong style="color:#2563eb;">$terminal_name</strong>!
+              </p>
+              <p style="margin:0 0 20px 0;font-size:15px;line-height:1.55;color:#374151;">
+                $intro_text
               </p>
 
+              $group_block
+
               <!-- Card com detalhes da fatura -->
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f5ff;border:1.5px solid #d6ccff;border-radius:12px;margin-bottom:24px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:24px;">
                 <tr>
                   <td style="padding:20px 24px;">
-                    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#6d5bd0;margin-bottom:14px;">
+                    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#6b7280;margin-bottom:14px;">
                       Detalhes da Fatura
                     </div>
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;">
                       <tr>
-                        <td style="padding:8px 0;color:#6b6b8d;border-bottom:1px solid #e8e3ff;">Referência</td>
-                        <td align="right" style="padding:8px 0;font-weight:600;color:#1a1a2e;border-bottom:1px solid #e8e3ff;">#$order_id</td>
+                        <td style="padding:8px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Referência</td>
+                        <td align="right" style="padding:8px 0;font-weight:600;color:#111827;border-bottom:1px solid #e5e7eb;">#$order_id</td>
                       </tr>
                       <tr>
-                        <td style="padding:8px 0;color:#6b6b8d;border-bottom:1px solid #e8e3ff;">Terminal</td>
-                        <td align="right" style="padding:8px 0;font-weight:600;color:#1a1a2e;border-bottom:1px solid #e8e3ff;">$terminal_name</td>
+                        <td style="padding:8px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Conta principal</td>
+                        <td align="right" style="padding:8px 0;font-weight:600;color:#111827;border-bottom:1px solid #e5e7eb;">$terminal_name</td>
                       </tr>
                       <tr>
-                        <td style="padding:8px 0;color:#6b6b8d;border-bottom:1px solid #e8e3ff;">Plano</td>
-                        <td align="right" style="padding:8px 0;font-weight:600;color:#1a1a2e;border-bottom:1px solid #e8e3ff;">$plan</td>
+                        <td style="padding:8px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Terminais cobertos</td>
+                        <td align="right" style="padding:8px 0;font-weight:600;color:#111827;border-bottom:1px solid #e5e7eb;">$terminals_covered</td>
                       </tr>
                       <tr>
-                        <td style="padding:8px 0;color:#6b6b8d;border-bottom:1px solid #e8e3ff;">Período</td>
-                        <td align="right" style="padding:8px 0;font-weight:600;color:#1a1a2e;border-bottom:1px solid #e8e3ff;">$months mês(es)</td>
+                        <td style="padding:8px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Plano</td>
+                        <td align="right" style="padding:8px 0;font-weight:600;color:#111827;border-bottom:1px solid #e5e7eb;">$plan</td>
                       </tr>
                       <tr>
-                        <td style="padding:10px 0;color:#6b6b8d;border-bottom:1px solid #e8e3ff;">Valor a Pagar</td>
-                        <td align="right" style="padding:10px 0;font-size:20px;font-weight:700;color:#4f2fe8;border-bottom:1px solid #e8e3ff;">$amount $currency</td>
+                        <td style="padding:8px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Período</td>
+                        <td align="right" style="padding:8px 0;font-weight:600;color:#111827;border-bottom:1px solid #e5e7eb;">$months mês(es)</td>
                       </tr>
                       <tr>
-                        <td style="padding:8px 0;color:#6b6b8d;border-bottom:1px solid #e8e3ff;">Estado</td>
-                        <td align="right" style="padding:8px 0;border-bottom:1px solid #e8e3ff;">
-                          <span style="display:inline-block;background-color:#fff4e6;color:#d97706;border:1px solid #fcd34d;border-radius:20px;padding:2px 10px;font-size:12px;font-weight:700;">
+                        <td style="padding:8px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Válido até</td>
+                        <td align="right" style="padding:8px 0;font-weight:700;color:#059669;border-bottom:1px solid #e5e7eb;">$valid_until</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:10px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Valor a Pagar</td>
+                        <td align="right" style="padding:10px 0;font-size:20px;font-weight:700;color:#2563eb;border-bottom:1px solid #e5e7eb;">$amount $currency</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:8px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Estado</td>
+                        <td align="right" style="padding:8px 0;border-bottom:1px solid #e5e7eb;">
+                          <span style="display:inline-block;background-color:#fffbeb;color:#b45309;border:1px solid #fde68a;border-radius:20px;padding:2px 10px;font-size:12px;font-weight:700;">
                             Por pagar
                           </span>
                         </td>
                       </tr>
                       <tr>
-                        <td style="padding:8px 0;color:#6b6b8d;">Data de Emissão</td>
-                        <td align="right" style="padding:8px 0;font-weight:600;color:#1a1a2e;">$created_at</td>
+                        <td style="padding:8px 0;color:#6b7280;">Data de Emissão</td>
+                        <td align="right" style="padding:8px 0;font-weight:600;color:#111827;">$created_at</td>
                       </tr>
                     </table>
                   </td>
                 </tr>
               </table>
 
-              <!-- Botão CTA SkyWallet (se houver link) -->
               $payment_cta
 
-              <!-- Instruções de transferência M-Pesa -->
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fffbea;border:1.5px solid #fcd34d;border-radius:10px;margin-bottom:24px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fffbeb;border:1px solid #fde68a;border-radius:10px;margin-bottom:24px;">
                 <tr>
                   <td style="padding:16px 20px;">
                     <div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:8px;">
                       Pagar via Transferência M-Pesa
                     </div>
                     <p style="margin:0;font-size:13px;color:#78350f;line-height:1.6;">
-                      Transfere <strong>$amount $currency</strong> para um dos números abaixo e envia o comprovativo ao suporte SkyPDV:<br /><br />
+                      Transfere <strong>$amount $currency</strong> para um dos números abaixo e envia o comprovativo:<br /><br />
                       <strong style="font-size:15px;letter-spacing:0.5px;">+258 860 716 912</strong> &nbsp;|&nbsp;
                       <strong style="font-size:15px;letter-spacing:0.5px;">+258 852 411 827</strong><br /><br />
                       Indica sempre a referência <strong>#$order_id</strong> na transferência.
@@ -175,22 +187,22 @@ INVOICE_HTML_TEMPLATE = """\
                 </tr>
               </table>
 
-              <p style="margin:0;font-size:13px;color:#6b6b8d;line-height:1.6;">
-                Após a confirmação do pagamento a tua subscrição será renovada automaticamente.<br />
-                Precisas de ajuda? Contacta o suporte em
-                <a href="mailto:suporte@bluesparkmz.com" style="color:#4f2fe8;text-decoration:none;">suporte@bluesparkmz.com</a>
+              <p style="margin:0;font-size:13px;color:#6b7280;line-height:1.6;">
+                Após a confirmação do pagamento, a subscrição fica activa até <strong style="color:#111827;">$valid_until</strong>
+                (dia 1 do período seguinte).<br />
+                Precisas de ajuda? Contacta-nos em
+                <a href="mailto:info@bluesparkmz.com" style="color:#2563eb;text-decoration:none;">info@bluesparkmz.com</a>
                 ou pelo WhatsApp <strong>+258 860 716 912</strong>.
               </p>
             </td>
           </tr>
 
-          <!-- Rodapé -->
           <tr>
-            <td align="center" style="background-color:#f4f6fb;padding:20px 32px;">
+            <td align="center" style="background-color:#f9fafb;padding:20px 32px;border-top:1px solid #e5e7eb;">
               <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;">
                 Este e-mail foi enviado automaticamente pelo sistema SkyPDV.<br />
                 &copy; BlueSpark MZ · Todos os direitos reservados.<br />
-                <a href="https://skypdvmz.bluesparkmz.com" style="color:#4f2fe8;text-decoration:none;">skypdvmz.bluesparkmz.com</a>
+                <a href="https://skypdvmz.bluesparkmz.com" style="color:#2563eb;text-decoration:none;">skypdvmz.bluesparkmz.com</a>
               </p>
             </td>
           </tr>
@@ -209,23 +221,26 @@ SkyPDV — Nova Fatura de Subscrição
 
 Olá, $terminal_name!
 
-Foi emitida uma nova fatura para o teu terminal SkyPDV.
+$intro_text
 
+$group_text
 Detalhes:
-  Referência : #$order_id
-  Terminal   : $terminal_name
-  Plano      : $plan
-  Período    : $months mês(es)
-  Valor      : $amount $currency
-  Estado     : Por pagar
-  Data       : $created_at
+  Referência        : #$order_id
+  Conta principal   : $terminal_name
+  Terminais cobertos: $terminals_covered
+  Plano             : $plan
+  Período           : $months mês(es)
+  Válido até        : $valid_until
+  Valor             : $amount $currency
+  Estado            : Por pagar
+  Data              : $created_at
 
 $payment_text\
 Pagar via Transferência M-Pesa:
   +258 860 716 912  |  +258 852 411 827
   Indica a referência #$order_id.
 
-Suporte: suporte@bluesparkmz.com | +258 860 716 912
+Contacto: info@bluesparkmz.com | +258 860 716 912
 
 BlueSpark MZ — https://bluesparkmz.com
 """
@@ -287,6 +302,25 @@ def _send_via_webmail(*, to: str, subject: str, body_html: str, body_text: str) 
         return False
 
 
+def _format_valid_until(value: str | datetime | None, months: int = 1) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%d/%m/%Y")
+    if isinstance(value, str) and value.strip():
+        try:
+            dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            return dt.strftime("%d/%m/%Y")
+        except ValueError:
+            return value.strip()
+    # Fallback: dia 1 do mês seguinte
+    now = datetime.utcnow()
+    month = now.month + max(1, int(months or 1))
+    year = now.year
+    while month > 12:
+        month -= 12
+        year += 1
+    return datetime(year, month, 1).strftime("%d/%m/%Y")
+
+
 def send_invoice_created(
     *,
     to_email: str,
@@ -298,8 +332,10 @@ def send_invoice_created(
     currency: str = "MZN",
     payment_url: str | None = None,
     created_at: str | datetime | None = None,
+    valid_until: str | datetime | None = None,
+    billing_child_names: list[str] | None = None,
 ) -> bool:
-    """Notifica o dono do terminal sobre nova fatura de subscrição."""
+    """Notifica o e-mail da conta principal (HTML) sobre nova fatura."""
     email = (to_email or "").strip()
     if not email:
         logger.warning("send_invoice_created: to_email vazio — e-mail não enviado")
@@ -308,15 +344,17 @@ def send_invoice_created(
     plan_label = (plan or "basic").strip().title()
     amount_str = f"{float(amount):,.2f}".replace(",", " ")
     created_label = _format_created_at(created_at)
+    valid_label = _format_valid_until(valid_until, months)
     safe_url = (payment_url or "").strip()
+    children = [name.strip() for name in (billing_child_names or []) if name and name.strip()]
 
     if safe_url:
         escaped_url = html.escape(safe_url, quote=True)
         payment_cta = (
             '<div style="text-align:center;margin-bottom:24px;">'
             f'<a href="{escaped_url}" target="_blank" '
-            'style="display:inline-block;background-color:#4f2fe8;color:#ffffff;text-decoration:none;'
-            'padding:14px 34px;border-radius:50px;font-size:15px;font-weight:700;">'
+            'style="display:inline-block;background-color:#2563eb;color:#ffffff;text-decoration:none;'
+            'padding:14px 34px;border-radius:10px;font-size:15px;font-weight:700;">'
             "Pagar Online (SkyWallet)"
             "</a>"
             "</div>"
@@ -326,31 +364,101 @@ def send_invoice_created(
         payment_cta = ""
         payment_text = ""
 
+    main_name = terminal_name or "Terminal SkyPDV"
+    if children:
+        all_names = [main_name, *children]
+        if len(all_names) == 2:
+            covered_label = f"{all_names[0]} e {all_names[1]}"
+            intro_text = (
+                f"Esta fatura é da conta principal <strong>{html.escape(main_name)}</strong> "
+                f"e cobre as duas empresas: "
+                f"<strong>{html.escape(all_names[0])}</strong> e "
+                f"<strong>{html.escape(all_names[1])}</strong>. "
+                "Com um único pagamento activas os dois terminais."
+            )
+            intro_plain = (
+                f"Esta fatura é da conta principal «{main_name}» e cobre as duas empresas: "
+                f"{all_names[0]} e {all_names[1]}. Com um único pagamento activas os dois terminais."
+            )
+        else:
+            listed = ", ".join(all_names[:-1]) + f" e {all_names[-1]}"
+            covered_label = listed
+            intro_text = (
+                f"Esta fatura é da conta principal <strong>{html.escape(main_name)}</strong> "
+                f"e cobre {len(all_names)} terminais: <strong>{html.escape(listed)}</strong>. "
+                "Com um único pagamento activas todas as lojas associadas."
+            )
+            intro_plain = (
+                f"Esta fatura é da conta principal «{main_name}» e cobre {len(all_names)} terminais: "
+                f"{listed}. Com um único pagamento activas todas as lojas associadas."
+            )
+        items_html = "".join(
+            f'<li style="margin:0 0 6px 0;color:#111827;"><strong>{html.escape(name)}</strong>'
+            f'{" — conta principal" if i == 0 else " — associada"}</li>'
+            for i, name in enumerate(all_names)
+        )
+        group_block = (
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            'style="background-color:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;margin-bottom:24px;">'
+            "<tr><td style=\"padding:16px 20px;\">"
+            '<div style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px;">'
+            "Cobrança agrupada</div>"
+            '<p style="margin:0 0 10px 0;font-size:13px;color:#1e3a8a;line-height:1.5;">'
+            "Esta cobrança inclui os seguintes terminais:</p>"
+            f'<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;">{items_html}</ul>'
+            "</td></tr></table>"
+        )
+        group_text = (
+            "Cobrança agrupada — terminais incluídos:\n"
+            + "\n".join(
+                f"  - {name}{' (conta principal)' if i == 0 else ' (associada)'}"
+                for i, name in enumerate(all_names)
+            )
+            + "\n\n"
+        )
+    else:
+        covered_label = main_name
+        intro_text = (
+            f"Foi emitida uma nova fatura de subscrição para o terminal "
+            f"<strong>{html.escape(main_name)}</strong>."
+        )
+        intro_plain = f"Foi emitida uma nova fatura de subscrição para o terminal «{main_name}»."
+        group_block = ""
+        group_text = ""
+
     html_vars = {
         "logo_skypdv": html.escape(_logo_skypdv_url(), quote=True),
         "logo_bluespark": html.escape(_logo_bluespark_url(), quote=True),
-        "terminal_name": html.escape(terminal_name or "Terminal SkyPDV"),
+        "terminal_name": html.escape(main_name),
         "order_id": html.escape(order_id),
         "plan": html.escape(plan_label),
         "months": str(months),
         "amount": html.escape(amount_str),
         "currency": html.escape(currency),
         "created_at": html.escape(created_label),
+        "valid_until": html.escape(valid_label),
+        "intro_text": intro_text,
+        "group_block": group_block,
+        "terminals_covered": html.escape(covered_label),
         "payment_cta": payment_cta,
     }
     text_vars = {
-        "terminal_name": terminal_name or "Terminal SkyPDV",
+        "terminal_name": main_name,
         "order_id": order_id,
         "plan": plan_label,
         "months": str(months),
         "amount": amount_str,
         "currency": currency,
         "created_at": created_label,
+        "valid_until": valid_label,
+        "intro_text": intro_plain,
+        "group_text": group_text,
+        "terminals_covered": covered_label,
         "payment_text": payment_text,
     }
 
     body_html = Template(INVOICE_HTML_TEMPLATE).safe_substitute(html_vars)
     body_text = Template(INVOICE_TEXT_TEMPLATE).safe_substitute(text_vars)
-    subject = f"Nova Fatura SkyPDV — {plan_label} · {months} mês(es) · {amount_str} {currency}"
+    subject = f"Nova Fatura SkyPDV — {plan_label} · válido até {valid_label} · {amount_str} {currency}"
 
     return _send_via_webmail(to=email, subject=subject, body_html=body_html, body_text=body_text)
