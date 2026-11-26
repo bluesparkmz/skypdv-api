@@ -110,11 +110,12 @@ INVOICE_HTML_TEMPLATE = """\
               <p style="margin:0 0 16px 0;font-size:16px;line-height:1.55;color:#111827;">
                 Olá, <strong style="color:#2563eb;">$terminal_name</strong>!
               </p>
-              <p style="margin:0 0 20px 0;font-size:15px;line-height:1.55;color:#374151;">
-                $intro_text
+              <p style="margin:0 0 8px 0;font-size:15px;line-height:1.55;color:#374151;">
+                Foi emitida uma nova fatura de subscrição para o teu terminal <strong>SkyPDV</strong>.
               </p>
-
-              $group_block
+              <p style="margin:0 0 20px 0;font-size:15px;line-height:1.55;color:#374151;">
+                $terminals_line
+              </p>
 
               <!-- Card com detalhes da fatura -->
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:24px;">
@@ -129,11 +130,7 @@ INVOICE_HTML_TEMPLATE = """\
                         <td align="right" style="padding:8px 0;font-weight:600;color:#111827;border-bottom:1px solid #e5e7eb;">#$order_id</td>
                       </tr>
                       <tr>
-                        <td style="padding:8px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Conta principal</td>
-                        <td align="right" style="padding:8px 0;font-weight:600;color:#111827;border-bottom:1px solid #e5e7eb;">$terminal_name</td>
-                      </tr>
-                      <tr>
-                        <td style="padding:8px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Terminais cobertos</td>
+                        <td style="padding:8px 0;color:#6b7280;border-bottom:1px solid #e5e7eb;">Terminal</td>
                         <td align="right" style="padding:8px 0;font-weight:600;color:#111827;border-bottom:1px solid #e5e7eb;">$terminals_covered</td>
                       </tr>
                       <tr>
@@ -221,13 +218,12 @@ SkyPDV — Nova Fatura de Subscrição
 
 Olá, $terminal_name!
 
-$intro_text
+Foi emitida uma nova fatura de subscrição para o teu terminal SkyPDV.
+$terminals_line
 
-$group_text
 Detalhes:
-  Referência        : #$order_id
-  Conta principal   : $terminal_name
-  Terminais cobertos: $terminals_covered
+  Referência : #$order_id
+  Terminal   : $terminals_covered
   Plano             : $plan
   Período           : $months mês(es)
   Válido até        : $valid_until
@@ -369,62 +365,14 @@ def send_invoice_created(
         all_names = [main_name, *children]
         if len(all_names) == 2:
             covered_label = f"{all_names[0]} e {all_names[1]}"
-            intro_text = (
-                f"Esta fatura é da conta principal <strong>{html.escape(main_name)}</strong> "
-                f"e cobre as duas empresas: "
-                f"<strong>{html.escape(all_names[0])}</strong> e "
-                f"<strong>{html.escape(all_names[1])}</strong>. "
-                "Com um único pagamento activas os dois terminais."
-            )
-            intro_plain = (
-                f"Esta fatura é da conta principal «{main_name}» e cobre as duas empresas: "
-                f"{all_names[0]} e {all_names[1]}. Com um único pagamento activas os dois terminais."
-            )
         else:
-            listed = ", ".join(all_names[:-1]) + f" e {all_names[-1]}"
-            covered_label = listed
-            intro_text = (
-                f"Esta fatura é da conta principal <strong>{html.escape(main_name)}</strong> "
-                f"e cobre {len(all_names)} terminais: <strong>{html.escape(listed)}</strong>. "
-                "Com um único pagamento activas todas as lojas associadas."
-            )
-            intro_plain = (
-                f"Esta fatura é da conta principal «{main_name}» e cobre {len(all_names)} terminais: "
-                f"{listed}. Com um único pagamento activas todas as lojas associadas."
-            )
-        items_html = "".join(
-            f'<li style="margin:0 0 6px 0;color:#111827;"><strong>{html.escape(name)}</strong>'
-            f'{" — conta principal" if i == 0 else " — associada"}</li>'
-            for i, name in enumerate(all_names)
-        )
-        group_block = (
-            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-            'style="background-color:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;margin-bottom:24px;">'
-            "<tr><td style=\"padding:16px 20px;\">"
-            '<div style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px;">'
-            "Cobrança agrupada</div>"
-            '<p style="margin:0 0 10px 0;font-size:13px;color:#1e3a8a;line-height:1.5;">'
-            "Esta cobrança inclui os seguintes terminais:</p>"
-            f'<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;">{items_html}</ul>'
-            "</td></tr></table>"
-        )
-        group_text = (
-            "Cobrança agrupada — terminais incluídos:\n"
-            + "\n".join(
-                f"  - {name}{' (conta principal)' if i == 0 else ' (associada)'}"
-                for i, name in enumerate(all_names)
-            )
-            + "\n\n"
-        )
+            covered_label = ", ".join(all_names[:-1]) + f" e {all_names[-1]}"
+        terminals_html = f"Terminais: <strong>{html.escape(covered_label)}</strong>."
+        terminals_plain = f"Terminais: {covered_label}."
     else:
         covered_label = main_name
-        intro_text = (
-            f"Foi emitida uma nova fatura de subscrição para o terminal "
-            f"<strong>{html.escape(main_name)}</strong>."
-        )
-        intro_plain = f"Foi emitida uma nova fatura de subscrição para o terminal «{main_name}»."
-        group_block = ""
-        group_text = ""
+        terminals_html = ""
+        terminals_plain = ""
 
     html_vars = {
         "logo_skypdv": html.escape(_logo_skypdv_url(), quote=True),
@@ -437,8 +385,7 @@ def send_invoice_created(
         "currency": html.escape(currency),
         "created_at": html.escape(created_label),
         "valid_until": html.escape(valid_label),
-        "intro_text": intro_text,
-        "group_block": group_block,
+        "terminals_line": terminals_html,
         "terminals_covered": html.escape(covered_label),
         "payment_cta": payment_cta,
     }
@@ -451,8 +398,7 @@ def send_invoice_created(
         "currency": currency,
         "created_at": created_label,
         "valid_until": valid_label,
-        "intro_text": intro_plain,
-        "group_text": group_text,
+        "terminals_line": terminals_plain,
         "terminals_covered": covered_label,
         "payment_text": payment_text,
     }
