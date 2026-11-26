@@ -85,8 +85,21 @@ class PDVTerminal(Base):
     subscription_status = Column(String(50), default="trial", nullable=False)
     next_billing_date = Column(DateTime, nullable=True)
     grace_period_ends_at = Column(DateTime, nullable=True)
+    # Conta principal de cobrança: se preenchido, esta loja é cobrada na empresa A.
+    billing_parent_terminal_id = Column(
+        Integer,
+        ForeignKey("pdv_terminals.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     user = relationship("User", backref="pdv_terminal")
+    billing_parent = relationship(
+        "PDVTerminal",
+        remote_side=[id],
+        foreign_keys=[billing_parent_terminal_id],
+        backref="billing_children",
+    )
     terminal_users = relationship("PDVTerminalUser", back_populates="terminal", cascade="all, delete-orphan")
     pending_invites = relationship("PDVTerminalInvite", back_populates="terminal", cascade="all, delete-orphan")
     suppliers = relationship("PDVSupplier", back_populates="terminal", cascade="all, delete-orphan")

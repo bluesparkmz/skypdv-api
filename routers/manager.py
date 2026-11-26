@@ -45,6 +45,10 @@ class ManagerTerminalItem(BaseModel):
     created_at: datetime | None = None
     staff_count: int = 0
     sales_count: int = 0
+    billing_parent_terminal_id: int | None = None
+    billing_parent_name: str | None = None
+    billing_children_count: int = 0
+    is_billing_main: bool = True
     owner: ManagerTerminalOwner
 
 
@@ -60,6 +64,10 @@ class ManagerTerminalUpdate(BaseModel):
     subscription_status: str | None = None
     next_billing_date: datetime | None = None
     grace_period_ends_at: datetime | None = None
+
+
+class ManagerBillingParentUpdate(BaseModel):
+    billing_parent_terminal_id: int | None = None
 
 
 def _count_terminals(db: Session, *filters) -> int:
@@ -82,6 +90,17 @@ def _terminal_item(db: Session, terminal: PDVTerminal) -> ManagerTerminalItem:
     sales_count = int(
         db.query(func.count(PDVSale.id)).filter(PDVSale.terminal_id == terminal.id).scalar() or 0
     )
+    parent_id = getattr(terminal, "billing_parent_terminal_id", None)
+    parent_name = None
+    if parent_id:
+        parent = db.query(PDVTerminal).filter(PDVTerminal.id == parent_id).first()
+        parent_name = parent.name if parent else None
+    children_count = int(
+        db.query(func.count(PDVTerminal.id))
+        .filter(PDVTerminal.billing_parent_terminal_id == terminal.id)
+        .scalar()
+        or 0
+    )
     return ManagerTerminalItem(
         id=terminal.id,
         name=terminal.name,
@@ -92,6 +111,10 @@ def _terminal_item(db: Session, terminal: PDVTerminal) -> ManagerTerminalItem:
         created_at=terminal.created_at,
         staff_count=staff_count,
         sales_count=sales_count,
+        billing_parent_terminal_id=parent_id,
+        billing_parent_name=parent_name,
+        billing_children_count=children_count,
+        is_billing_main=parent_id is None,
         owner=ManagerTerminalOwner.model_validate(terminal.user),
     )
 
@@ -195,6 +218,32 @@ class ManagerInvoiceCreate(BaseModel):
 class ManagerInvoiceMarkPaid(BaseModel):
     notes: str | None = None
     payment_method: str = "transfer"
+
+
+@router.patch("/terminals/{terminal_id}/billing-parent", response_model=ManagerTerminalItem)
+def manager_set_billing_parent(
+    terminal_id: int,
+    payload: ManagerBillingParentUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_platform_admin),
+):
+    """Associa esta loja a uma conta principal de cobrança (ou remove com null)."""
+    from controllers import billing as billing_controller
+
+    terminal = billing_controller.set_billing_parent(
+        db,
+        terminal_id=terminal_id,
+        billing_parent_terminal_id=payload.billing_parent_terminal_id,
+    )
+    terminal = (
+        db.query(PDVTerminal)
+        .options(joinedload(PDVTerminal.user))
+        .filter(PDVTerminal.id == terminal.id)
+        .first()
+    )
+    if not terminal or not terminal.user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terminal não encontrado")
+    return _terminal_item(db, terminal)
 
 
 @router.post("/terminals/{terminal_id}/invoices")

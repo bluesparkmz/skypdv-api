@@ -92,6 +92,72 @@ def _resolve_amount(plan: str, months: int, amount_mzn: Decimal | None) -> Decim
     return (unit * Decimal(months)).quantize(Decimal("0.01"))
 
 
+def get_billing_children(db: Session, parent_terminal_id: int) -> list[PDVTerminal]:
+    return (
+        db.query(PDVTerminal)
+        .filter(PDVTerminal.billing_parent_terminal_id == parent_terminal_id)
+        .order_by(PDVTerminal.id.asc())
+        .all()
+    )
+
+
+def get_billing_group(db: Session, terminal: PDVTerminal) -> list[PDVTerminal]:
+    """Empresa principal + lojas associadas (ou só a própria se for independente)."""
+    if terminal.billing_parent_terminal_id:
+        parent = (
+            db.query(PDVTerminal)
+            .filter(PDVTerminal.id == terminal.billing_parent_terminal_id)
+            .first()
+        )
+        if parent:
+            return [parent] + get_billing_children(db, parent.id)
+    return [terminal] + get_billing_children(db, terminal.id)
+
+
+def set_billing_parent(
+    db: Session,
+    *,
+    terminal_id: int,
+    billing_parent_terminal_id: int | None,
+) -> PDVTerminal:
+    terminal = db.query(PDVTerminal).filter(PDVTerminal.id == terminal_id).first()
+    if not terminal:
+        raise HTTPException(status_code=404, detail="Terminal não encontrado")
+
+    if billing_parent_terminal_id is None:
+        terminal.billing_parent_terminal_id = None
+        terminal.updated_at = datetime.utcnow()
+        db.add(terminal)
+        db.commit()
+        db.refresh(terminal)
+        return terminal
+
+    if billing_parent_terminal_id == terminal_id:
+        raise HTTPException(status_code=400, detail="Uma loja não pode ser conta principal de si mesma")
+
+    parent = db.query(PDVTerminal).filter(PDVTerminal.id == billing_parent_terminal_id).first()
+    if not parent:
+        raise HTTPException(status_code=404, detail="Conta principal não encontrada")
+    if parent.billing_parent_terminal_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="A conta principal não pode ser uma loja já associada a outra",
+        )
+    # Evitar ciclos: se A já tem filhas, não pode passar a ser filha de B
+    if get_billing_children(db, terminal.id):
+        raise HTTPException(
+            status_code=400,
+            detail="Esta loja já é conta principal de outras. Remove as associações primeiro",
+        )
+
+    terminal.billing_parent_terminal_id = parent.id
+    terminal.updated_at = datetime.utcnow()
+    db.add(terminal)
+    db.commit()
+    db.refresh(terminal)
+    return terminal
+
+
 def serialize_invoice(invoice: PDVBillingInvoice) -> dict:
     return {
         "id": invoice.id,
@@ -136,9 +202,44 @@ def create_invoice(
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal não encontrado")
 
-    amount = _resolve_amount(plan, months, amount_mzn)
+    # Cobrança só na conta principal
+    if terminal.billing_parent_terminal_id:
+        parent = (
+            db.query(PDVTerminal)
+            .filter(PDVTerminal.id == terminal.billing_parent_terminal_id)
+            .first()
+        )
+        parent_name = parent.name if parent else f"#{terminal.billing_parent_terminal_id}"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Esta loja é cobrada na conta principal «{parent_name}». "
+                f"Cria a fatura no terminal #{terminal.billing_parent_terminal_id}."
+            ),
+        )
+
+    children = get_billing_children(db, terminal.id)
+    group_size = 1 + len(children)
+    if amount_mzn is not None:
+        amount = _resolve_amount(plan, months, amount_mzn)
+    else:
+        unit = PLAN_PRICES_MZN.get(plan)
+        if unit is None:
+            raise HTTPException(status_code=400, detail="Plano inválido")
+        amount = (unit * Decimal(months) * Decimal(group_size)).quantize(Decimal("0.01"))
+
+    child_names = ", ".join(child.name for child in children)
     order_id = _new_order_id()
-    description = f"SkyPDV {plan.title()} · {months} mês(es) · {terminal.name}"
+    if children:
+        description = (
+            f"SkyPDV {plan.title()} · {months} mês(es) · {terminal.name} "
+            f"+ {len(children)} associada(s)"
+            + (f" ({child_names})" if child_names else "")
+        )
+        group_note = f"Grupo: {terminal.name}" + (f" + {child_names}" if child_names else "")
+        notes = f"{notes.strip()} | {group_note}" if notes and notes.strip() else group_note
+    else:
+        description = f"SkyPDV {plan.title()} · {months} mês(es) · {terminal.name}"
 
     invoice = PDVBillingInvoice(
         terminal_id=terminal.id,
@@ -217,7 +318,30 @@ def create_invoice(
 
     payload = serialize_invoice(invoice)
     payload["terminal_name"] = terminal.name
-    payload["owner_email"] = terminal.user.email if terminal.user else None
+    payload["billing_group_size"] = group_size
+    payload["billing_child_names"] = [child.name for child in children]
+    owner_email = terminal.user.email if terminal.user else None
+    payload["owner_email"] = owner_email
+
+    email_sent = False
+    if owner_email:
+        try:
+            from mail_service import send_invoice_created
+
+            email_sent = send_invoice_created(
+                to_email=owner_email,
+                terminal_name=terminal.name,
+                order_id=invoice.order_id,
+                plan=invoice.plan,
+                months=invoice.months,
+                amount=float(invoice.amount),
+                currency=invoice.currency,
+                payment_url=invoice.payment_url,
+                created_at=invoice.created_at,
+            )
+        except Exception:
+            logger.exception("Erro inesperado ao enviar e-mail da fatura %s", invoice.order_id)
+    payload["email_sent"] = email_sent
     return payload
 
 
@@ -244,19 +368,34 @@ def list_invoices(
     return {"total": total, "limit": limit, "offset": offset, "items": items}
 
 
-def _activate_terminal_for_invoice(db: Session, invoice: PDVBillingInvoice) -> None:
-    terminal = db.query(PDVTerminal).filter(PDVTerminal.id == invoice.terminal_id).with_for_update().first()
-    if not terminal:
-        return
+def _activate_one_terminal(db: Session, terminal: PDVTerminal, months: int, now: datetime) -> None:
     base = terminal.next_billing_date
-    now = datetime.utcnow()
     if not base or base < now:
         base = now
-    terminal.next_billing_date = base + timedelta(days=30 * max(1, invoice.months))
+    terminal.next_billing_date = base + timedelta(days=30 * max(1, months))
     terminal.subscription_status = "active"
     terminal.grace_period_ends_at = None
     terminal.updated_at = now
     db.add(terminal)
+
+
+def _activate_terminal_for_invoice(db: Session, invoice: PDVBillingInvoice) -> None:
+    terminal = db.query(PDVTerminal).filter(PDVTerminal.id == invoice.terminal_id).with_for_update().first()
+    if not terminal:
+        return
+    now = datetime.utcnow()
+    months = max(1, invoice.months)
+    _activate_one_terminal(db, terminal, months, now)
+    # Activa também as lojas associadas a esta conta principal
+    for child in get_billing_children(db, terminal.id):
+        locked = (
+            db.query(PDVTerminal)
+            .filter(PDVTerminal.id == child.id)
+            .with_for_update()
+            .first()
+        )
+        if locked:
+            _activate_one_terminal(db, locked, months, now)
 
 
 def mark_invoice_paid(

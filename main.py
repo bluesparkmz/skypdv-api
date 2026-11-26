@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from fastapi import Depends, FastAPI, Request, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect, text
 from typing import Optional, List
@@ -49,6 +50,10 @@ app = FastAPI(
     description="Backend independente do SkyPDV com autenticacao via BlueSpark Accounts.",
 )
 
+_static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
 _cash_register_worker_started = False
 
 
@@ -82,6 +87,40 @@ def _ensure_account_columns():
                 )
     except Exception as exc:
         print(f"Account columns migration error: {exc}")
+
+
+def _ensure_billing_parent_column():
+    """Cobrança agrupada: lojas filhas apontam para a empresa principal."""
+    try:
+        with engine.begin() as conn:
+            inspector = inspect(conn)
+            if "pdv_terminals" not in inspector.get_table_names():
+                return
+            existing = {col["name"] for col in inspector.get_columns("pdv_terminals")}
+            if "billing_parent_terminal_id" not in existing:
+                conn.execute(
+                    text(
+                        "ALTER TABLE pdv_terminals "
+                        "ADD COLUMN billing_parent_terminal_id INTEGER"
+                    )
+                )
+                if conn.dialect.name == "postgresql":
+                    conn.execute(
+                        text(
+                            "ALTER TABLE pdv_terminals "
+                            "ADD CONSTRAINT fk_pdv_terminals_billing_parent "
+                            "FOREIGN KEY (billing_parent_terminal_id) "
+                            "REFERENCES pdv_terminals(id) ON DELETE SET NULL"
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "CREATE INDEX IF NOT EXISTS ix_pdv_terminals_billing_parent "
+                            "ON pdv_terminals (billing_parent_terminal_id)"
+                        )
+                    )
+    except Exception as exc:
+        print(f"Billing parent column migration error: {exc}")
 
 
 def _ensure_outflow_schema():
@@ -198,6 +237,7 @@ def start_cash_register_expiry_worker():
     if _cash_register_worker_started:
         return
     _ensure_account_columns()
+    _ensure_billing_parent_column()
     _ensure_outflow_schema()
     _ensure_sale_payment_method_relation()
     _ensure_service_payment_method_relation()
